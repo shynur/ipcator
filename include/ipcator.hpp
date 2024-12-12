@@ -7,6 +7,7 @@
 #include <cassert>
 #include <concepts>
 #include <format>
+#include <functional>
 #include <memory_resource>
 #include <memory>
 #include <new>
@@ -14,6 +15,7 @@
 #include <ranges>
 #include <random>
 #include <string>
+#include <source_location>
 #include <type_traits>
 #include <utility>
 #include <unordered_map>
@@ -21,7 +23,7 @@
 #include <sys/mman.h>  // mmap, shm_open, shm_unlink, PROT_{WRITE,READ}, MAP_{SHARED,FAILED}
 #include <sys/stat.h>  // fstat, struct stat
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
-using std::operator""sv;
+using std::operator""s, std::operator""sv;
 
 
 namespace {
@@ -84,83 +86,86 @@ namespace {
  */
 template <bool creat>
 struct Shared_Memory {
-        const std::string name;  // Shared memory object 的名字, 格式为 "/Abc123".
+    const std::string name;  // Shared memory object 的名字, 格式为 "/Abc123".
 
-        // 必须先确认需求 (`size') 才能向 kernel 请求映射.
-        const std::size_t size;  // `size' 必须是 `getpagesize()' 的整数倍.
-        //                ^^^^ 通常只有 writer 会关注该字段.
-        void *const area;  // Kernel 将共享内存映射到进程地址空间的位置.
+    // 必须先确认需求 (`size') 才能向 kernel 请求映射.
+    const std::size_t size;  // `size' 必须是 `getpagesize()' 的整数倍.
+    //                ^^^^ 通常只有 writer 会关注该字段.
+    void *const area;  // Kernel 将共享内存映射到进程地址空间的位置.
 
 
-        Shared_Memory(const std::string name, const std::size_t size) requires(creat)
-        : name{name}, size{size}, area{map_shm<creat>(name, size)} {
-            if (DEBUG) {
-                // 测试时, 允许我们随意分配任意大小的块.
-            } else
-                assert(size == ceil_to_page_size(size));
-        }
-        Shared_Memory(const std::string name) requires(!creat)
-        : name{name}, size{[&] -> decltype(this->size) {
-            // `size' 可以在计算 `area' 的过程中生成, 但这会导致
-            // 延迟初始化和相应的 warning.  所以必须在此计算.
-            struct stat shm;
-            const auto fd = shm_open(name.c_str(), O_RDONLY, 0444);
-            assert(fd != -1);
-            fstat(fd, &shm);
-            close(fd);
-            return shm.st_size;
-        }()}, area{map_shm(name, this->size)} {}
-        Shared_Memory(const Shared_Memory& that) requires(!creat): Shared_Memory{that.name} {
-            // Reader 手上的多个 `Shared_Memory' 可以标识同一个 shared memory object,
-            // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
-            // 的地址 (`area') 相同.  对于
-            //     Shared_Memory a, b;
-            // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
-        }
-        ~Shared_Memory() {
-            // Writer 将要拒绝任何新的连接请求:
-            if constexpr (creat)
-                shm_unlink(this->name.c_str());
-                // 此后 `shm_open' 尝试都将失败.
-                // 当所有 shm 都被 `munmap'ed 后, 共享内存将被 deallocate.
+    Shared_Memory(const std::string name, const std::size_t size) requires(creat)
+    : name{name}, size{size}, area{map_shm<creat>(name, size)} {
+        if (DEBUG) {
+            // 测试时, 允许我们随意分配任意大小的块.
+        } else
+            assert(size == ceil_to_page_size(size));
+    }
+    Shared_Memory(const std::string name) requires(!creat)
+    : name{name}, size{[&] -> decltype(this->size) {
+        // `size' 可以在计算 `area' 的过程中生成, 但这会导致
+        // 延迟初始化和相应的 warning.  所以必须在此计算.
+        struct stat shm;
+        const auto fd = shm_open(name.c_str(), O_RDONLY, 0444);
+        assert(fd != -1);
+        fstat(fd, &shm);
+        close(fd);
+        return shm.st_size;
+    }()}, area{map_shm(name, this->size)} {}
+    Shared_Memory(const Shared_Memory& that) requires(!creat): Shared_Memory{that.name} {
+        // Reader 手上的多个 `Shared_Memory' 可以标识同一个 shared memory object,
+        // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
+        // 的地址 (`area') 相同.  对于
+        //     Shared_Memory a, b;
+        // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
+    }
+    ~Shared_Memory() {
+        // Writer 将要拒绝任何新的连接请求:
+        if constexpr (creat)
+            shm_unlink(this->name.c_str());
+            // 此后 `shm_open' 尝试都将失败.
+            // 当所有 shm 都被 `munmap'ed 后, 共享内存将被 deallocate.
 
-            munmap(this->area, this->size);
-        }
+        munmap(this->area, this->size);
+    }
 
-        auto operator==(this const auto& self, const Shared_Memory& other) {
-            if (&self == &other)
-                return true;
+    auto operator==(this const auto& self, const Shared_Memory& other) {
+        if (&self == &other)
+            return true;
 
-            // 对于 reader 来说, 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
-            if constexpr (!creat) {
-                const auto result = self.name == other.name;
-                if (result)
-                    assert(std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other));
-                return result;
-            }
-
-            return false;
+        // 对于 reader 来说, 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
+        if constexpr (!creat) {
+            const auto result = self.name == other.name;
+            if (result)
+                assert(std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other));
+            return result;
         }
 
-        auto operator[](const std::size_t i) const -> volatile std::uint8_t& {
-            assert(i < this->size);
-            return static_cast<std::uint8_t *>(this->area)[i];
-        }
+        return false;
+    }
 
-        /* 打印 shm 区域的内存布局.  */
-        auto pretty_memory_view(const std::size_t num_col = 32, const std::string space = " ") const noexcept {
-            std::string view;
-            for (const auto s : std::views::iota(0u, this->size / num_col + (this->size % num_col != 0))
-                                | std::views::transform([=, this](const auto i) {
-                                    return std::views::iota(0u, num_col) 
-                                            | std::views::take_while([=, this](const auto j) {return i*num_col+j != this->size;})
-                                            | std::views::transform([=, this](const auto j) {return std::format("{:02X}", (*this)[i*num_col+j]);})
-                                            | std::views::join_with(space);
-                                })
-                                | std::views::join_with('\n'))
-                view += s;
-            return view;
-        }
+    auto operator[](const std::size_t i) const -> volatile std::uint8_t& {
+        assert(i < this->size);
+        return static_cast<std::uint8_t *>(this->area)[i];
+    }
+
+    /* 打印 shm 区域的内存布局.  */
+    auto pretty_memory_view(const std::size_t num_col = 32, const std::string space = " ") const noexcept {
+        return std::ranges::fold_left(
+            std::views::iota(0u, this->size / num_col + (this->size % num_col != 0))
+            | std::views::transform([=, this](const auto linum) {
+                return std::views::iota(linum * num_col)
+                        | std::views::take(num_col)
+                        | std::views::take_while(std::bind_back(std::less<>{}, this->size))
+                        | std::views::transform([this](const auto idx) { return (*this)[idx]; })
+                        | std::views::transform([](const auto B) { return std::format("{:02X}", B); })
+                        | std::views::join_with(space);
+            })
+            | std::views::join_with('\n'),
+            ""s,
+            std::plus<>{}
+        );
+    }
 };
 template <auto creat>
 struct std::hash<Shared_Memory<creat>> {
@@ -201,6 +206,18 @@ namespace {
 }
 
 
+#define IPCATOR_LOG_ALLOC()  \
+    if (DEBUG)  \
+        std::println(  \
+            stderr, "[Log] `{}`\n\tsize={}, alignment={}",  \
+            std::source_location::current().function_name(), size, alignment  \
+        );
+#define IPCATOR_LOG_DEALLOC()  \
+    if (DEBUG)  \
+        std::println(  \
+            stderr, "[Log] `{}`\n\tarea={}, size={}",  \
+            std::source_location::current().function_name(), area, size  \
+        );
 /*
  * 按需创建并拥有若干 `Shared_Memory<true>',
  * 以向下游提供 shm 页面作为 memory resource.
@@ -210,12 +227,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         // 恒有 "shm_dict.at(given_ptr)->area == given_ptr".
 
         void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
-            if (DEBUG)
-                std::println(
-                    stderr, "[Log] ShM_Resource::{}\t\t size={}, alignment={}",
-                    __func__, size, alignment
-                );
-
+            IPCATOR_LOG_ALLOC();
             if (alignment > getpagesize() + 0u) {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
@@ -242,11 +254,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             return shm->area;
         }
         void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t) override {
-            if (DEBUG)
-                std::println(
-                    stderr, "[Log] ShM_Resource::{}\t area={}, size={}",
-                    __func__, area, size
-                );
+            IPCATOR_LOG_DEALLOC();
             const auto whatcanisay_shm_out = std::move(this->shm_dict.extract(area).mapped());
             assert(whatcanisay_shm_out->size >= size);
         }
@@ -266,22 +274,14 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
         std::pmr::monotonic_buffer_resource buffer;
 
         void *do_allocate(const std::size_t size, const std::size_t alignment) override {
-            if (DEBUG)
-                std::println(
-                    stderr, "[Log] Monotonic_ShM_Buffer::{}\t size={}, alignment={}",
-                    __func__, size, alignment
-                );
+            IPCATOR_LOG_ALLOC();
             return this->buffer.allocate(
                 size,
                 alignment //std::max(alignment, getpagesize() + 0ul)
             );
         }
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
-            if (DEBUG)
-                std::println(
-                    stderr, "[Log] Monotonic_ShM_Buffer::{}\t area={}, size={}, alignment={}",
-                    __func__, area, size, alignment
-                );
+            IPCATOR_LOG_DEALLOC();
             return this->buffer.deallocate(
                 area,
                 size,
