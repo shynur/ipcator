@@ -7,16 +7,19 @@ CXXFLAGS = -std=c++23         \
 LDFLAGS = -lrt
 
 .PHONY: test
-test:  bin/a.exe
-	time bin/a.exe
+test:  bin/main.exe
+	time bin/main.exe
 	echo $$?
 
-bin/a.exe:  include/ipcator.hpp  src/a.cpp
+bin/main.exe:  include/ipcator.hpp  include/tester.hpp  src/main.cpp
 	mkdir -p bin
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o bin/a.exe  src/a.cpp
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o bin/main.exe  src/main.cpp
 
 .PHONY: git
 git:
-	git add .
-	git commit -v
+	git commit -av
 	git push
+
+.PHONY: clean
+clean:
+	rm -rf bin/

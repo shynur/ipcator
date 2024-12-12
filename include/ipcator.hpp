@@ -1,3 +1,5 @@
+#pragma once
+// #define NDEBUG
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -206,12 +208,25 @@ class ShM_Resource: public std::pmr::memory_resource {
         std::unordered_map<void *, std::unique_ptr<Shared_Memory<true>>> shm_dict;
         // 恒有 "shm_dict.at(given_ptr)->area == given_ptr".
 
-        void *do_allocate(const std::size_t size, [[maybe_unused]] std::size_t) override {
+        void *do_allocate(const std::size_t size, [[maybe_unused]] std::size_t alignment) override {
+            if (DEBUG)
+                std::println(
+                    stderr, "[Log] ShM_Resource::{}\t\t size={}, alignment={}",
+                    __func__, size, alignment
+                );
+            // 仍不对 `size' 作任何限制.  由唯一下游 `Monotonic_ShM_Buffer'
+            // 负责将 `size' 向上取整到 page size.
             const auto shm = new Shared_Memory<true>{generate_shm_UUName(), size};
+
             this->shm_dict.emplace(shm->area, shm);
             return shm->area;
         }
-        void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t) override {
+        void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t alignment) override {
+            if (DEBUG)
+                std::println(
+                    stderr, "[Log] ShM_Resource::{}\t area={}, size={}, alignment={}",
+                    __func__, area, size, alignment
+                );
             const auto whatcanisay_shm_out = std::move(this->shm_dict.extract(area).mapped());
             assert(whatcanisay_shm_out->size >= size);
         }
@@ -231,12 +246,22 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
         std::pmr::monotonic_buffer_resource buffer;
 
         void *do_allocate(const std::size_t size, const std::size_t alignment) override {
+            if (DEBUG)
+                std::println(
+                    stderr, "[Log] Monotonic_ShM_Buffer::{}\t size={}, alignment={}",
+                    __func__, size, alignment
+                );
             return this->buffer.allocate(
                 size,
                 std::max(alignment, getpagesize() + 0ul)
             );
         }
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
+            if (DEBUG)
+                std::println(
+                    stderr, "[Log] Monotonic_ShM_Buffer::{}\t area={}, size={}, alignment={}",
+                    __func__, area, size, alignment
+                );
             return this->buffer.deallocate(
                 area,
                 size,
