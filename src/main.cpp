@@ -1,9 +1,9 @@
 #include "ipcator.hpp"
 #include "tester.hpp"
+#include <iostream>
 
 
 int main() {
-    std::println("Page Size = {}", getpagesize());
     Tester{};
 }
 

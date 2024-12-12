@@ -9,6 +9,7 @@
 #include <format>
 #include <memory_resource>
 #include <memory>
+#include <new>
 #include <print>
 #include <ranges>
 #include <random>
@@ -147,7 +148,7 @@ struct Shared_Memory {
         }
 
         /* 打印 shm 区域的内存布局.  */
-        auto pretty_memory_view(const std::size_t num_col = 32, const std::string space = " ") const {
+        auto pretty_memory_view(const std::size_t num_col = 32, const std::string space = " ") const noexcept {
             std::string view;
             for (const auto s : std::views::iota(0u, this->size / num_col + (this->size % num_col != 0))
                                 | std::views::transform([=, this](const auto i) {
@@ -180,7 +181,7 @@ namespace {
      * 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
      * 所以生成的名字必须足够长, 降低碰撞率.
      */
-    auto generate_shm_UUName() {
+    auto generate_shm_UUName() noexcept {
         constexpr auto prefix = "/github_dot_com_slash_shynur_slash_ipcator"sv; 
         constexpr auto available_chars = "0123456789"
                                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -208,12 +209,31 @@ class ShM_Resource: public std::pmr::memory_resource {
         std::unordered_map<void *, std::unique_ptr<Shared_Memory<true>>> shm_dict;
         // 恒有 "shm_dict.at(given_ptr)->area == given_ptr".
 
-        void *do_allocate(const std::size_t size, [[maybe_unused]] std::size_t alignment) override {
+        void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
             if (DEBUG)
                 std::println(
                     stderr, "[Log] ShM_Resource::{}\t\t size={}, alignment={}",
                     __func__, size, alignment
                 );
+
+            if (alignment > getpagesize() + 0u) {
+                struct TooLargeAlignment: std::bad_alloc {
+                    const std::string message;
+                    TooLargeAlignment(const std::size_t demanded_alignment) noexcept: message{
+                        std::format(
+                            "请求分配的字节数组要求按 {} 对齐, 超出了页表大小 (即 {}).",
+                            // 理论上可以比页表大, 但出于简单性, 拒绝这种请求.
+                            demanded_alignment,
+                            getpagesize()
+                        )
+                    } {}
+                    const char *what() const noexcept override {
+                        return message.c_str();
+                    }
+                };
+                throw TooLargeAlignment{alignment};
+            }
+
             // 仍不对 `size' 作任何限制.  由唯一下游 `Monotonic_ShM_Buffer'
             // 负责将 `size' 向上取整到 page size.
             const auto shm = new Shared_Memory<true>{generate_shm_UUName(), size};
@@ -221,11 +241,11 @@ class ShM_Resource: public std::pmr::memory_resource {
             this->shm_dict.emplace(shm->area, shm);
             return shm->area;
         }
-        void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t alignment) override {
+        void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t) override {
             if (DEBUG)
                 std::println(
-                    stderr, "[Log] ShM_Resource::{}\t area={}, size={}, alignment={}",
-                    __func__, area, size, alignment
+                    stderr, "[Log] ShM_Resource::{}\t area={}, size={}",
+                    __func__, area, size
                 );
             const auto whatcanisay_shm_out = std::move(this->shm_dict.extract(area).mapped());
             assert(whatcanisay_shm_out->size >= size);
@@ -253,7 +273,7 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
                 );
             return this->buffer.allocate(
                 size,
-                std::max(alignment, getpagesize() + 0ul)
+                alignment //std::max(alignment, getpagesize() + 0ul)
             );
         }
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
@@ -265,7 +285,7 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
             return this->buffer.deallocate(
                 area,
                 size,
-                std::max(alignment, getpagesize() + 0ul)
+                alignment //std::max(alignment, getpagesize() + 0ul)
             );
         }
         bool do_is_equal(const std::pmr::memory_resource& that) const noexcept override {
