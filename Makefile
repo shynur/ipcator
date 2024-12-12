@@ -1,6 +1,8 @@
 SHELL = bash
 CXX = g++
-CXXFLAGS = -std=c++23 -Wall -Wextra -O0 -ggdb -g3  \
+CXXFLAGS = -std=c++23         \
+           -O0 -ggdb -g3       \
+           -Wpedantic -Wall -W  \
            -Iinclude
 LDFLAGS = -lrt
 

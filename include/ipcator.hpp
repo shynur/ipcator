@@ -1,27 +1,34 @@
-#include <string>
-#include <cstdlib>
-#include <memory_resource>
+#include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <cstdio>
 #include <cassert>
 #include <concepts>
-#include <utility>
-#include <unordered_map>
-#include <atomic>
+#include <format>
+#include <memory_resource>
 #include <memory>
-#include <cstdio>
 #include <print>
 #include <ranges>
-#include <algorithm>
-#include <cstddef>
-#include <format>
+#include <random>
+#include <string>
 #include <type_traits>
-#include <unistd.h>  // ftruncate, getpagesize
-#include <sys/mman.h>  // mmap, shm_open
-#include <sys/stat.h>  // fstat
+#include <utility>
+#include <unordered_map>
+#include <unistd.h>  // close, ftruncate, getpagesize
+#include <sys/mman.h>  // mmap, shm_open, shm_unlink, PROT_{WRITE,READ}, MAP_{SHARED,FAILED}
+#include <sys/stat.h>  // fstat, struct stat
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY}
 using std::operator""sv;
 
 
-constexpr auto DEBUG = true;
+namespace {
+    constexpr auto DEBUG
+#ifdef NDEBUG
+                        = false;
+#else
+                        = true;
+#endif
+}
 
 
 namespace {
@@ -36,25 +43,27 @@ namespace {
 }
 
 
-template <bool creat = false>
-auto map_shm(const std::string name, const std::size_t size) {
-    // TODO: 细化参数 '0666'.
-    const auto fd = shm_open(name.c_str(), creat ? O_CREAT | O_RDWR : O_RDONLY, 0666);
-    assert(fd != -1);
+namespace {
+    template <bool creat = false>
+    auto map_shm(const std::string name, const std::size_t size) {
+        // TODO: 细化参数 '0666'.
+        const auto fd = shm_open(name.c_str(), creat ? O_CREAT | O_RDWR : O_RDONLY, 0666);
+        assert(fd != -1);
 
-    assert(size);
-    if constexpr (creat) {
-        const auto result_resize = ftruncate(fd, size);
-        assert(result_resize != -1);
+        assert(size);
+        if constexpr (creat) {
+            const auto result_resize = ftruncate(fd, size);
+            assert(result_resize != -1);
+        }
+
+        auto *const area = mmap(
+            nullptr, size, (creat ? PROT_WRITE : 0) | PROT_READ, MAP_SHARED, fd, 0
+        );
+        close(fd);  // 映射完立即关闭, 对后续操作没啥影响.
+        assert(area != MAP_FAILED);
+
+        return area;
     }
-
-    auto *const area = mmap(
-        nullptr, size, (creat ? PROT_WRITE : 0) | PROT_READ, MAP_SHARED, fd, 0
-    );
-    close(fd);  // 映射完立即关闭, 对后续操作没啥影响.
-    assert(area != MAP_FAILED);
-
-    return area;
 }
 
 
@@ -62,24 +71,26 @@ template <bool creat>
 struct Shared_Memory {
         const std::string name;  // Shared memory object 的名字, 格式为 "/Abc123".
 
-        const std::size_t size;
-        // `size' 必须是 `getpagesize()' 的整数倍.  通常只有 writer 会关注该字段.
+        const std::size_t size;  // `size' 必须是 `getpagesize()' 的整数倍.
+        //                ^^^^ 通常只有 writer 会关注该字段.
         void *const area;  // Kernel 将共享内存映射到进程地址空间的位置.
 
 
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, size{size}, area{map_shm<creat>(name, this->size)} {
-            if (!DEBUG) 
+            if (DEBUG) {
+                // 测试时, 允许我们随意分配任意大小的块.
+            } else
                 assert(size == ceil_to_page_size(size));
         }
         Shared_Memory(const std::string name) requires(!creat)
-        : name{name}, size{[&] -> decltype(size) {
+        : name{name}, size{[&] -> decltype(this->size) {
             /* `size' 本可以在计算 `area' 的过程中生成, 但这会导致延迟初始化和相应的 warning.  */
             struct stat shm;
             const auto fd = shm_open(name.c_str(), O_RDONLY, 0666);
             fstat(fd, &shm);
             close(fd);
-                return shm.st_size;
+            return shm.st_size;
         }()}, area{map_shm(name, this->size)} {}
         Shared_Memory(const Shared_Memory& that) requires(!creat): Shared_Memory{that.name} {}
         ~Shared_Memory() {
@@ -91,13 +102,18 @@ struct Shared_Memory {
             munmap(this->area, this->size);
         }
 
-        auto operator==(this const auto& self, const Shared_Memory& other) requires(!creat) {
-            const auto result = self.name == other.name;
+        auto operator==(this const auto& self, const Shared_Memory& other) {
+            if (&self == &other)
+                return true;
 
-            if (result)
-                assert(std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other));
+            if constexpr (!creat) {
+                const auto result = self.name == other.name;
+                if (result)
+                    assert(std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other));
+                return result;
+            }
 
-            return result;
+            return false;
         }
 
         auto operator[](const std::size_t i) const -> volatile std::uint8_t& {
@@ -105,7 +121,7 @@ struct Shared_Memory {
             return static_cast<std::uint8_t *>(this->area)[i];
         }
 
-        auto pretty_memory_view(const std::size_t num_col = 32, const std::string space = " ") const -> std::string {
+        auto pretty_memory_view(const std::size_t num_col = 32, const std::string space = " ") const {
             std::string view;
             for (const auto s : std::views::iota(0u, this->size / num_col + (this->size % num_col != 0))
                                 | std::views::transform([=, this](const auto i) {
@@ -131,20 +147,23 @@ struct std::hash<Shared_Memory<creat>> {
 namespace {
     /*
      * 创建一个全局唯一的名字提供给 shm obj.
-     * 由于 (取名 + 构造 shm) 不是原子的, 所以生成的名字必须足够长, 降低碰撞率.
+     * 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
+     * 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
+     * 所以生成的名字必须足够长, 降低碰撞率.
      */
     auto generate_shm_UUName() {
         constexpr auto prefix = "/github_dot_com_slash_shynur_slash_ipcator"sv; 
-        constexpr auto available_chars
-            = "0123456789"
-              "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-              "abcdefghijklmnopqrstuvwxyz"sv;
+        constexpr auto available_chars = "0123456789"
+                                         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                         "abcdefghijklmnopqrstuvwxyz"sv;
 
         constinit static std::atomic_uint cnt;
         auto name = std::format("{}--{:06}--", prefix, ++cnt);
 
+        std::mt19937 gen{DEBUG ? 0 : std::random_device{}()};
+        std::uniform_int_distribution<std::size_t> distrib{0, available_chars.length()-1};
         for (auto _ : std::views::iota(name.length(), 255u))
-            name += available_chars[std::rand() % available_chars.length()];
+            name += available_chars[distrib(gen)];
 
         return name;
     }
@@ -152,17 +171,15 @@ namespace {
 
 
 class ShM_Resource: public std::pmr::memory_resource {
-        std::unordered_map<void *, std::unique_ptr<Shared_Memory<true>>> shm_book;
+        std::unordered_map<void *, std::unique_ptr<Shared_Memory<true>>> shm_dict;
 
         void *do_allocate(const std::size_t size, [[maybe_unused]] std::size_t) override {
-            std::println(stderr, "{} : {}", __func__, size);
             const auto shm = new Shared_Memory<true>{generate_shm_UUName(), size};
-            this->shm_book.emplace(shm->area, shm);
+            this->shm_dict.emplace(shm->area, shm);
             return shm->area;
         }
         void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t) override {
-            std::println(stderr, "{} : {}", __func__, size);
-            const auto shm = std::move(this->shm_book.extract(area).mapped());
+            const auto shm = std::move(this->shm_dict.extract(area).mapped());
             assert(shm->size == ceil_to_page_size(size));
             // TODO: 下游的 `Monotonic_ShM_Buffer{}.buffer' 为什么总是不按照 页面大小 请求内存? 
         }
@@ -179,14 +196,14 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
 
         void *do_allocate(const std::size_t size, const std::size_t alignment) override {
             return buffer.allocate(
-                ceil_to_page_size(size),
+                size,
                 std::max(alignment, getpagesize() + 0ul)
             );
         }
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
             return buffer.deallocate(
                 area,
-                ceil_to_page_size(size),
+                size,
                 std::max(alignment, getpagesize() + 0ul)
             );
         }
@@ -197,16 +214,6 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
         Monotonic_ShM_Buffer(const std::size_t initial_size = getpagesize())
         : buffer{
             initial_size, &this->resrc
-        } {}
-        /*
-         * 这个版本的 constructor 会 borrow 一个现成的 buffer.
-         * 因此, buffer 的位置是否位于共享内存上是不受控制的.
-         * 如果能确定最终需要在 IPC 时传递的对象的_最小_ size, 可以在独属
-         * writer 进程自己的地址空间内开辟大小为 (size-1) 的 buffer 传进来.
-         */
-        Monotonic_ShM_Buffer(void *const buffer, const std::size_t buffer_size)
-        : buffer{
-            buffer, buffer_size, &this->resrc
         } {}
 
         // TODO: 记录 allocation 日志.
@@ -224,5 +231,5 @@ struct ShM_Allocator {
         std::pmr::unsynchronized_pool_resource
     > pool;
 
-    ShM_Allocator(/* TODO */) requires(sync): upstream{/* args */}, pool{/* options, */ &this->upstream} {}
+    ShM_Allocator(/* TODO */): upstream{/* args */}, pool{/* options, */ &this->upstream} {}
 };

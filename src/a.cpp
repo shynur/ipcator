@@ -2,7 +2,6 @@
 
 int main() {
   std::println("Page Size = {}", getpagesize());
-  ShM_Allocator<true> a;
 }
 
 struct Println_at_StartExit {
