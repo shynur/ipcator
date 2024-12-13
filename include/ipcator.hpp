@@ -196,12 +196,17 @@ namespace {
         constinit static std::atomic_uint cnt;
         auto name = std::format("{}--{:06}--", prefix, ++cnt);
 
-        std::mt19937 gen{DEBUG ? 0 : std::random_device{}()};
-        std::uniform_int_distribution<std::size_t> distri{0, available_chars.length()-1};
-        for (auto _ : std::views::iota(name.length(), 255u))
-            name += available_chars[distri(gen)];
-
-        return name;
+        return std::ranges::fold_left(
+            std::views::iota(name.length(), 255u)
+            | std::views::transform([
+                gen = std::mt19937{DEBUG ? 0 : std::random_device{}()}, available_chars,
+                distri = std::uniform_int_distribution<>{0, available_chars.length()-1}
+            ](auto......) mutable {
+                return available_chars[distri(gen)];
+            }),
+            name,
+            std::plus<>{}
+        );
     }
 }
 
@@ -218,7 +223,7 @@ namespace {
     !DEBUG  \
     ? void()  \
     : std::println(  \
-        stderr, "[Log] `{}`\n" "\033[32m\tarea={}, size={}\033[0m",  \
+        stderr, "[Log] `{}`\n" "\033[31m\tarea={}, size={}\033[0m",  \
         std::source_location::current().function_name(), area, size  \
     )  \
 )
@@ -253,8 +258,8 @@ class ShM_Resource: public std::pmr::memory_resource {
             // 仍不对 `size' 作任何限制.  由唯一下游 `Monotonic_ShM_Buffer'
             // 负责将 `size' 向上取整到 page size.
             const auto shm = new Shared_Memory<true>{generate_shm_UUName(), size};
-
             this->shm_dict.emplace(shm->area, shm);
+
             return shm->area;
         }
         void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t) override {
@@ -279,17 +284,21 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
 
         void *do_allocate(const std::size_t size, const std::size_t alignment) override {
             IPCATOR_LOG_ALLOC();
-            return this->buffer.allocate(
+
+            // 下游请求 `size', 而 `monotonic_buffer_resource' 可能会在分配的块前后附加上
+            // 块的元信息, 总是不超过 128B.  
+            const auto p = this->buffer.allocate(
                 size,
-                alignment //std::max(alignment, getpagesize() + 0ul)
+                alignment
             );
+            return p;
         }
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
             IPCATOR_LOG_DEALLOC();
-            return this->buffer.deallocate(
+            this->buffer.deallocate(
                 area,
                 size,
-                alignment //std::max(alignment, getpagesize() + 0ul)
+                alignment
             );
         }
         bool do_is_equal(const std::pmr::memory_resource& that) const noexcept override {
@@ -301,6 +310,8 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
         : buffer{
             initial_size, &this->resrc
         } {}
+
+        // void release() { this->buffer.release(); }
 
         // TODO: 记录 allocation 日志.
 };

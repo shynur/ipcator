@@ -5,10 +5,45 @@ struct Tester {
     Tester() {
         print_sys_info();
         // test_shm();
-        // test_UUName();
+        test_UUName();
         // ShM_Resource{};
-        Monotonic_ShM_Buffer mono{0};
-        std::ignore = mono.allocate(50, 4096);
+        Monotonic_ShM_Buffer mono{};
+        void *p;
+        p = mono.allocate(
+            1024
+        );
+        mono.deallocate(
+            p,
+            1024
+        );  // 1
+        p = mono.allocate(
+            1024
+        );
+        mono.deallocate(
+            p,
+            1024
+        ); // 2
+        p = mono.allocate(
+            1024
+        );
+        mono.deallocate(
+            p,
+            1024
+        ); // 3
+        p = mono.allocate(
+            1024
+        );
+        mono.deallocate(
+            p,
+            1024
+        ); // 4
+        p = mono.allocate(
+            1024
+        );
+        mono.deallocate(
+            p,
+            1024
+        ); // 5
     }
     void print_sys_info() {
         std::println(stderr, "Page Size = {}", getpagesize());
