@@ -4,46 +4,22 @@
 struct Tester {
     Tester() {
         print_sys_info();
-        // test_shm();
+        println("");
+
+        test_shm();
+        println("");
+
         test_UUName();
-        // ShM_Resource{};
-        Monotonic_ShM_Buffer mono{};
+        println("");
+
+        test_sync_pool();
+    }
+    void test_sync_pool() {
+        std::pmr::synchronized_pool_resource pool{new ShM_Resource};
         void *p;
-        p = mono.allocate(
-            1024
-        );
-        mono.deallocate(
-            p,
-            1024
-        );  // 1
-        p = mono.allocate(
-            1024
-        );
-        mono.deallocate(
-            p,
-            1024
-        ); // 2
-        p = mono.allocate(
-            1024
-        );
-        mono.deallocate(
-            p,
-            1024
-        ); // 3
-        p = mono.allocate(
-            1024
-        );
-        mono.deallocate(
-            p,
-            1024
-        ); // 4
-        p = mono.allocate(
-            1024
-        );
-        mono.deallocate(
-            p,
-            1024
-        ); // 5
+        p = pool.allocate(4096);
+        pool.deallocate(p, 4096);
+        p = pool.allocate(1024);
     }
     void print_sys_info() {
         std::println(stderr, "Page Size = {}", getpagesize());
