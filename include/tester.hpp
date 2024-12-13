@@ -8,7 +8,7 @@ struct Tester {
         // test_UUName();
         // ShM_Resource{};
         Monotonic_ShM_Buffer mono{0};
-        std::ignore = mono.allocate(50, 5000);
+        std::ignore = mono.allocate(50, 4096);
     }
     void print_sys_info() {
         std::println(stderr, "Page Size = {}", getpagesize());
@@ -21,7 +21,9 @@ struct Tester {
         for (auto i : std::views::iota(0u, w.size))
             w[i] = std::rand();
         
-        println(w.pretty_memory_view());
+        auto view = w.pretty_memory_view();
+        // static_assert(std::is_same_v<decltype(view), std::string>);
+        println(view);
         println("");
         println(r.pretty_memory_view());
     }

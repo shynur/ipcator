@@ -157,8 +157,8 @@ struct Shared_Memory {
                 return std::views::iota(linum * num_col)
                         | std::views::take(num_col)
                         | std::views::take_while(std::bind_back(std::less<>{}, this->size))
-                        | std::views::transform([this](const auto idx) { return (*this)[idx]; })
-                        | std::views::transform([](const auto B) { return std::format("{:02X}", B); })
+                        | std::views::transform([this](auto idx) { return (*this)[idx]; })
+                        | std::views::transform([](auto B) { return std::format("{:02X}", B); })
                         | std::views::join_with(space);
             })
             | std::views::join_with('\n'),
@@ -206,18 +206,22 @@ namespace {
 }
 
 
-#define IPCATOR_LOG_ALLOC()  \
-    if (DEBUG)  \
-        std::println(  \
-            stderr, "[Log] `{}`\n\tsize={}, alignment={}",  \
-            std::source_location::current().function_name(), size, alignment  \
-        );
-#define IPCATOR_LOG_DEALLOC()  \
-    if (DEBUG)  \
-        std::println(  \
-            stderr, "[Log] `{}`\n\tarea={}, size={}",  \
-            std::source_location::current().function_name(), area, size  \
-        );
+#define IPCATOR_LOG_ALLOC()  (  \
+    !DEBUG  \
+    ? void()  \
+    : std::println(  \
+        stderr, "[Log] `{}`\n" "\033[32m\tsize={}, alignment={}\033[0m",  \
+        std::source_location::current().function_name(), size, alignment  \
+    )  \
+)
+#define IPCATOR_LOG_DEALLOC()  (  \
+    !DEBUG  \
+    ? void()  \
+    : std::println(  \
+        stderr, "[Log] `{}`\n" "\033[32m\tarea={}, size={}\033[0m",  \
+        std::source_location::current().function_name(), area, size  \
+    )  \
+)
 /*
  * 按需创建并拥有若干 `Shared_Memory<true>',
  * 以向下游提供 shm 页面作为 memory resource.
