@@ -6,20 +6,23 @@ CXXFLAGS = -std=c++23  \
            -Iinclude
 LDFLAGS = -lrt
 
-.PHONY: test
-test:  bin/main.exe
-	@time bin/main.exe
+.PHONY: run
+run:  bin/debug.exe
+	@time bin/debug.exe
 	echo $$?
 
-.PHONY: release
-release:
-	g++ -std=c++23 -D NDEBUG -O3 -Iinclude $(LDFLAGS) -o bin/main.exe  src/main.cpp
-	@time bin/main.exe
+.PHONY: run-build
+run-build:  bin/release.exe
+	@time bin/release.exe
 	echo $$?
 
-bin/main.exe:  include/ipcator.hpp  include/tester.hpp  src/main.cpp
+bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o bin/main.exe  src/main.cpp
+	$(CXX) $(CXXFLAGS) -g0 -Ofast $(AggressiveOptimization) $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+
+bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
+	@mkdir -p bin
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@  $<
 
 .PHONY: git
 git:

@@ -8,7 +8,7 @@ int main() {
 }
 
 
-static struct Println_at_StartExit {
-    Println_at_StartExit() { std::println(stderr, ""); }
-    ~Println_at_StartExit() { std::println(""); }
+static struct Println_onStartExit {
+    Println_onStartExit() { std::cerr << std::endl; }
+    ~Println_onStartExit() { std::cout << std::endl; }
 } _;

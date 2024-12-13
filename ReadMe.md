@@ -1,7 +1,7 @@
 试运行:
 
 ```bash
-make
+make run
 ```
 
 _____

@@ -15,12 +15,13 @@
 #include <ranges>
 #include <random>
 #include <string>
+#include <string_view>
 #include <source_location>
 #include <type_traits>
 #include <utility>
 #include <unordered_map>
 #include <unistd.h>  // close, ftruncate, getpagesize
-#include <sys/mman.h>  // mmap, shm_open, shm_unlink, PROT_{WRITE,READ}, MAP_{SHARED,FAILED}
+#include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED}
 #include <sys/stat.h>  // fstat, struct stat
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
 using std::operator""s, std::operator""sv;
@@ -55,11 +56,12 @@ namespace {
      * 其提供的 `size' 恰好和 shm obj 的大小相等.
      */
     template <bool creat = false>
-    auto map_shm(const std::string name, const std::size_t size) {
+    auto map_shm(const std::string& name, const std::size_t size) {
+        assert(name.length() <= 255);
         const auto fd = shm_open(
             name.c_str(),
             creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,  // TODO: 需要细化.
-            0666  // TODO: 细化参数 '0666'.  (下文同.)
+            0666  // TODO: 需要细化.  (下文同.)
         );
         assert(fd != -1);
 
@@ -121,7 +123,7 @@ struct Shared_Memory {
     }, area{map_shm(name, this->size)} {
         if (DEBUG)
             // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
-            for (const auto& byte : std::as_const(*this))
+            for (auto byte : std::as_const(*this))
                 std::ignore = auto{byte};
     }
     Shared_Memory(const Shared_Memory& that) requires(!creat)
@@ -170,11 +172,11 @@ struct Shared_Memory {
     }
 
     /* 打印 shm 区域的内存布局.  */
-    auto pretty_memory_view(const std::size_t num_col = 32, const std::string space = " ") const noexcept {
+    auto pretty_memory_view(const std::size_t num_col = 32, const std::string_view space = " ") const noexcept {
         return std::ranges::fold_left(
             std::views::iota(0u, this->size / num_col + (this->size % num_col != 0))
             | std::views::transform(
-                [=, this](const auto linum) {
+                [=, this](auto linum) {
                     return std::views::iota(linum * num_col)
                         | std::views::take(num_col)
                         | std::views::take_while(std::bind_back(std::less<>{}, this->size))
@@ -196,6 +198,7 @@ struct Shared_Memory {
 };
 template <auto creat>
 struct std::hash<Shared_Memory<creat>> {
+    /* 只校验字节数组.  要判断是否相等, 使用更严格的 `operator=='.  */
     auto operator()(const auto& shm) const noexcept {
         return std::hash<decltype(shm.area)>{}(shm.area)
                ^ std::hash<decltype(shm.size)>{}(shm.size); 
@@ -220,10 +223,10 @@ namespace {
                                          "abcdefghijklmnopqrstuvwxyz"sv;
 
         // 在 shm obj 的名字中包含一个顺序递增的计数字段:
-        constinit static std::atomic_uint cnt;
+        static constinit std::atomic_uint cnt;
         auto name = std::format("{}--{:06}--", prefix, ++cnt);
 
-        return std::ranges::fold_left(
+        static const auto postfix = std::ranges::fold_left(
             std::views::iota(name.length(), 255u)
             | std::views::transform([
                 available_chars,
@@ -232,9 +235,11 @@ namespace {
             ](auto......) mutable {
                 return available_chars[distri(gen)];
             }),
-            name,
+            ""s,
             std::plus<>{}
         );
+
+        return name + postfix;
     }
 }
 
@@ -298,7 +303,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         return this == &that;
     }
 
-    public: auto& get_shm_dict() const { return this->shm_dict; }
+    public:  auto& get_shm_dict() const { return this->shm_dict; }
 };
 static_assert(std::movable<ShM_Resource>);
 
@@ -337,6 +342,7 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
             &this->resrc
         } {}
 
+        /* 强行释放所有空间.  */
         void release() {
             this->buffer.release();
             assert(this->resrc.get_shm_dict().empty());
@@ -350,8 +356,7 @@ static_assert(!std::copyable<Monotonic_ShM_Buffer>);
 
 
 /*
- * 以 `ShM_Resource' 为上游的单调增长 buffer.  优先使用上游上次
- * 下发内存时未能用到的区域响应 `allocate', 而不是再次申请内存资源.
+ * 以 `ShM_Resource' 为上游的
  */
 template <bool sync>
 struct ShM_Allocator {
