@@ -8,21 +8,21 @@ LDFLAGS = -lrt
 
 .PHONY: run
 run:  bin/debug.exe
-	@time bin/debug.exe
+	@time $<
 	echo $$?
 
 .PHONY: run-build
 run-build:  bin/release.exe
-	@time bin/release.exe
+	@time $<
 	echo $$?
 
 bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
-	$(CXX) $(CXXFLAGS) -g0 -Ofast $(AggressiveOptimization) $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+	$(CXX) $(CXXFLAGS) $(AggressiveOptimization) $(LDFLAGS) -o $@  $<
 
 bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@  $<
+	$(CXX) $(CXXFLAGS) -g0 -Ofast $(LDFLAGS) -o $@ -D'NDEBUG'  $<
 
 .PHONY: git
 git:

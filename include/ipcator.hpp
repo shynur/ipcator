@@ -57,7 +57,7 @@ namespace {
      */
     template <bool creat = false>
     auto map_shm(const std::string& name, const std::size_t size) {
-        assert(name.length() <= 255);
+        assert(name.front() == '/' && name.length() <= 255);
         const auto fd = shm_open(
             name.c_str(),
             creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,  // TODO: 需要细化.
@@ -76,8 +76,7 @@ namespace {
             assert(size == shm.st_size + 0ul);
         }
 
-        assert(size);
-        const auto area = mmap(
+        const auto area = (std::conditional_t<creat, void, const void> *)mmap(
             nullptr, size,
             (creat ? PROT_WRITE : 0) | PROT_READ,  // TODO: 需要细化.
             MAP_SHARED,  // TODO: 需要调整.
@@ -87,7 +86,11 @@ namespace {
         assert(area != MAP_FAILED);
         return area;
     }
+
+    static_assert( std::is_same_v<decltype(map_shm<true>("", 0)), void *> );
+    static_assert( std::is_same_v<decltype(map_shm("", 0)), const void *> );
 }
+
 
 /*
  * 不可变的最小单元, 表示一块共享内存区域.
@@ -224,10 +227,13 @@ namespace {
 
         // 在 shm obj 的名字中包含一个顺序递增的计数字段:
         static constinit std::atomic_uint cnt;
-        auto name = std::format("{}--{:06}--", prefix, ++cnt);
+        const auto base_name_dot = std::format(
+            "{}-{:06}.", prefix,
+            ++cnt  // 1 + cnt.fetch_add(1, std::memory_order_relaxed)
+        );
 
-        static const auto postfix = std::ranges::fold_left(
-            std::views::iota(name.length(), 255u)
+        static const auto suffix = std::ranges::fold_left(
+            std::views::iota(base_name_dot.length(), 255u)
             | std::views::transform([
                 available_chars,
                 gen = std::mt19937{DEBUG ? 0 : std::random_device{}()},
@@ -239,7 +245,7 @@ namespace {
             std::plus<>{}
         );
 
-        return name + postfix;
+        return base_name_dot + suffix;
     }
 }
 
