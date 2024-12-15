@@ -178,20 +178,15 @@ struct Shared_Memory {
     /* 打印 shm 区域的内存布局.  */
     auto pretty_memory_view(const std::size_t num_col = 32, const std::string_view space = " ") const noexcept {
         return std::ranges::fold_left(
-            std::views::iota(0u, this->size / num_col + (this->size % num_col != 0))
-            | std::views::transform(
-                [=, this](const auto linum) {
-                    return std::views::iota(linum * num_col)
-                        | std::views::take(num_col)
-                        | std::views::take_while(std::bind_back(std::less<>{}, this->size))
-                        | std::views::transform([this](const auto idx) { return (*this)[idx]; })
-                        | std::views::transform([](const auto B) { return std::format("{:02X}", B); })
-                        | std::views::join_with(space);
-                }
-            )
+            *this
+            | std::views::chunk(num_col)
+            | std::views::transform(std::bind_back(
+                std::bit_or<>{},
+                std::views::transform([](auto& B) { return std::format("{:02X}", B); })
+                | std::views::join_with(space)
+            ))
             | std::views::join_with('\n'),
-            ""s,
-            std::plus<>{}
+            ""s, std::plus<>{}
         );
     }
 
@@ -208,6 +203,21 @@ struct std::hash<Shared_Memory<creat>> {
                ^ std::hash<decltype(shm.size)>{}(shm.size); 
     }
 };
+template <auto creat>
+struct std::formatter<Shared_Memory<creat>> {
+    constexpr auto parse(const auto& parser) {
+        return parser.end();
+    }
+    auto format(const Shared_Memory<creat>& obj, auto& context) const {
+        static const auto obj_constructor = std::format("Shared_Memory<{}>", creat);
+
+        return std::format_to(
+            context.out(),
+            R"({{ "constructor": "{}", "name": "{}", "size": {}, "&area": {} }})",
+            obj_constructor, obj.name, obj.size, obj.area
+        );
+    }
+};
 Shared_Memory(
     std::convertible_to<std::string> auto, std::integral auto
 ) -> Shared_Memory<true>;
@@ -216,8 +226,6 @@ Shared_Memory(
 ) -> Shared_Memory<false>;
 static_assert( !std::movable<Shared_Memory<true>> );
 static_assert( !std::movable<Shared_Memory<false>> );
-static_assert( std::copy_constructible<Shared_Memory<false>> );
-
 
 namespace {
     /*
@@ -240,7 +248,7 @@ namespace {
         );
 
         static const auto suffix = std::ranges::fold_left(
-            std::views::iota(base_name_dot.length(), 255u - "/dev/shm/"sv.length())
+            std::views::iota(base_name_dot.length(), 255u - "/dev/shm/"s.length())
             | std::views::transform([
                 available_chars,
                 gen = std::mt19937{std::random_device{}()},
@@ -248,8 +256,7 @@ namespace {
             ](auto......) mutable {
                 return available_chars[distri(gen)];
             }),
-            ""s,
-            std::plus<>{}
+            ""s, std::plus<>{}
         );
 
         assert(("/dev/shm/" + base_name_dot + suffix).length() == 255);
