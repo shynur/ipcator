@@ -2,24 +2,25 @@
 // #define NDEBUG
 #include <algorithm>
 #include <atomic>
-#include <cstddef>
-#include <cstdio>
 #include <cassert>
 #include <concepts>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <format>
 #include <functional>
-#include <memory_resource>
 #include <memory>
+#include <memory_resource>
 #include <new>
 #include <print>
-#include <ranges>
 #include <random>
+#include <ranges>
+#include <source_location>
 #include <string>
 #include <string_view>
-#include <source_location>
 #include <type_traits>
-#include <utility>
 #include <unordered_map>
+#include <utility>
 #include <unistd.h>  // close, ftruncate, getpagesize
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED}
 #include <sys/stat.h>  // fstat, struct stat
@@ -53,11 +54,11 @@ namespace {
     /* 
      * 给定 shared memory object 的名字, 创建/打开 shm obj,
      * 并将其映射到进程自身的地址空间中.  对于 reader, 要求
-     * 其提供的 `size' 恰好和 shm obj 的大小相等.
+     * 其提供的 `size' 恰好和 shm obj 的大小相等, 因为 TODO...
      */
     template <bool creat = false>
-    auto map_shm(const std::string& name, const std::size_t size) {
-        assert(name.front() == '/' && name.length() <= 255);
+    auto map_shm[[nodiscard]](const std::string& name, const std::size_t size) {
+        assert(name.length() <= 247);
         const auto fd = shm_open(
             name.c_str(),
             creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,  // TODO: 需要细化.
@@ -73,7 +74,7 @@ namespace {
             // 校验 `size' 是否和 shm obj 的真实大小吻合.
             struct stat shm;
             fstat(fd, &shm);
-            assert(size == shm.st_size + 0ul);
+            assert(size == shm.st_size + 0uz);
         }
 
         const auto area = (std::conditional_t<creat, void, const void> *)mmap(
@@ -87,8 +88,8 @@ namespace {
         return area;
     }
 
-    static_assert( std::is_same_v<decltype(map_shm<true>("", 0)), void *> );
-    static_assert( std::is_same_v<decltype(map_shm("", 0)), const void *> );
+    static_assert( std::is_same_v<decltype(map_shm<true>("", 0)),       void *> );
+    static_assert( std::is_same_v<decltype(map_shm      ("", 0)), const void *> );
 }
 
 
@@ -111,6 +112,7 @@ struct Shared_Memory {
             for (auto& byte : *this)
                 byte ^= byte;
     }
+    // TODO:  或许也允许 reader 指定 size?  虽然这并不能节约内存.
     Shared_Memory(const std::string name) requires(!creat)
     : name{name}, size{
         // `size' 可以在计算 `area' 的过程中生成, 但这会导致
@@ -147,31 +149,30 @@ struct Shared_Memory {
         munmap(const_cast<void *>(this->area), this->size);
     }
 
-    auto operator==(this const auto& self, const Shared_Memory& other) {
+    auto operator==(this const auto& self, decltype(self) other) {
         if (&self == &other)
             return true;
 
         // 对于 reader 来说, 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
         if constexpr (!creat) {
             const auto result = self.name == other.name;
-            if (result)
-                assert(
-                    std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other)
-                );
+            result && assert(
+                std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other)
+            );
             return result;
         }
 
         return false;
     }
 
-    auto operator[](const std::size_t i) const -> volatile auto& {
-        assert(i < this->size);
-        return static_cast<const std::uint8_t *>(this->area)[i];
-    }
-    auto operator[](const std::size_t i) -> volatile auto& requires(creat) {
-        static_assert(creat);
-        assert(i < this->size);
-        return static_cast<std::uint8_t *>(this->area)[i];
+    auto operator[](this auto& self, const std::size_t i) -> volatile auto& {
+        assert(i < self.size);
+        return static_cast<
+            std::conditional_t<
+                std::is_const_v<std::remove_reference_t<decltype(self)>> || !creat,
+                const std::uint8_t, std::uint8_t
+            > *
+        >(self.area)[i];
     }
 
     /* 打印 shm 区域的内存布局.  */
@@ -179,12 +180,12 @@ struct Shared_Memory {
         return std::ranges::fold_left(
             std::views::iota(0u, this->size / num_col + (this->size % num_col != 0))
             | std::views::transform(
-                [=, this](auto linum) {
+                [=, this](const auto linum) {
                     return std::views::iota(linum * num_col)
                         | std::views::take(num_col)
                         | std::views::take_while(std::bind_back(std::less<>{}, this->size))
-                        | std::views::transform([this](auto idx) { return (*this)[idx]; })
-                        | std::views::transform([](auto B) { return std::format("{:02X}", B); })
+                        | std::views::transform([this](const auto idx) { return (*this)[idx]; })
+                        | std::views::transform([](const auto B) { return std::format("{:02X}", B); })
                         | std::views::join_with(space);
                 }
             )
@@ -196,8 +197,8 @@ struct Shared_Memory {
 
     auto begin(this auto& self) { return &self[0]; }
     auto end(this auto& self)   { return self.begin() + self.size; }
-    auto cbegin() const { return &(*this)[0]; }
-    auto cend()   const { return this->cbegin() + this->size; }
+    auto cbegin() const { return this->begin(); }
+    auto cend()   const { return this->end(); }
 };
 template <auto creat>
 struct std::hash<Shared_Memory<creat>> {
@@ -207,9 +208,15 @@ struct std::hash<Shared_Memory<creat>> {
                ^ std::hash<decltype(shm.size)>{}(shm.size); 
     }
 };
-static_assert(!std::movable<Shared_Memory<true>>);
-static_assert(!std::movable<Shared_Memory<false>>);
-static_assert(std::copy_constructible<Shared_Memory<false>>);
+Shared_Memory(
+    std::convertible_to<std::string> auto, std::integral auto
+) -> Shared_Memory<true>;
+Shared_Memory(
+    std::convertible_to<std::string> auto
+) -> Shared_Memory<false>;
+static_assert( !std::movable<Shared_Memory<true>> );
+static_assert( !std::movable<Shared_Memory<false>> );
+static_assert( std::copy_constructible<Shared_Memory<false>> );
 
 
 namespace {
@@ -220,23 +227,23 @@ namespace {
      * 所以生成的名字必须足够长, 降低碰撞率.
      */
     auto generate_shm_UUName() noexcept {
-        constexpr auto prefix = "/github_dot_com_slash_shynur_slash_ipcator"sv; 
+        constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator"sv; 
         constexpr auto available_chars = "0123456789"
                                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                                          "abcdefghijklmnopqrstuvwxyz"sv;
 
         // 在 shm obj 的名字中包含一个顺序递增的计数字段:
-        static constinit std::atomic_uint cnt;
+        constinit static std::atomic_uint cnt;
         const auto base_name_dot = std::format(
             "{}-{:06}.", prefix,
-            ++cnt  // 1 + cnt.fetch_add(1, std::memory_order_relaxed)
+            1 + cnt.fetch_add(1, std::memory_order_relaxed)
         );
 
         static const auto suffix = std::ranges::fold_left(
-            std::views::iota(base_name_dot.length(), 255u)
+            std::views::iota(base_name_dot.length(), 255u - "/dev/shm/"sv.length())
             | std::views::transform([
                 available_chars,
-                gen = std::mt19937{DEBUG ? 0 : std::random_device{}()},
+                gen = std::mt19937{std::random_device{}()},
                 distri = std::uniform_int_distribution<>{0, available_chars.length()-1}
             ](auto......) mutable {
                 return available_chars[distri(gen)];
@@ -245,7 +252,8 @@ namespace {
             std::plus<>{}
         );
 
-        return base_name_dot + suffix;
+        assert(("/dev/shm/" + base_name_dot + suffix).length() == 255);
+        return '/' + base_name_dot + suffix;
     }
 }
 
@@ -309,9 +317,10 @@ class ShM_Resource: public std::pmr::memory_resource {
         return this == &that;
     }
 
-    public:  auto& get_shm_dict() const { return this->shm_dict; }
+    public:
+        auto& get_shm_dict() const& { return this->shm_dict; }
 };
-static_assert(std::movable<ShM_Resource>);
+static_assert( std::movable<ShM_Resource> );
 
 
 /*
@@ -357,8 +366,8 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
 
         // TODO: 记录 allocation 日志.
 };
-static_assert(!std::movable<Monotonic_ShM_Buffer>);
-static_assert(!std::copyable<Monotonic_ShM_Buffer>);
+static_assert( !std::movable<Monotonic_ShM_Buffer> );
+static_assert( !std::copyable<Monotonic_ShM_Buffer> );
 
 
 /*

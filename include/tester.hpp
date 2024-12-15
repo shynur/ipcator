@@ -1,18 +1,35 @@
 #include "ipcator.hpp"
+#include <vector>
 
 
 struct Tester {
     Tester() {
-        print_sys_info();
-        println("");
+        //print_sys_info(), println("");
+        //test_shm(),println("");
+        //test_UUName(),println("");
+        //test_sync_pool(),println("");
+        test_const(),println("");
+    }
+    void test_const() {
+        Shared_Memory<true> w{"/ipcator123", 256};
+        static_assert( std::is_same_v<decltype(w[0]), volatile std::uint8_t&> );
+        static_assert( std::is_same_v<decltype(w.begin()), volatile std::uint8_t *> );
+        static_assert( std::is_same_v<decltype(w.cbegin()), const volatile std::uint8_t *> );
 
-        test_shm();
-        println("");
+        const auto& cw{w};
+        static_assert( std::is_same_v<decltype(cw[0]), const volatile std::uint8_t&> );
+        static_assert( std::is_same_v<decltype(cw.begin()), const volatile std::uint8_t *> );
+        static_assert( std::is_same_v<decltype(cw.cbegin()), const volatile std::uint8_t *> );
 
-        test_UUName();
-        println("");
+        Shared_Memory<false> r{"/ipcator123"};
+        static_assert( std::is_same_v<decltype(r[0]), const volatile std::uint8_t&> );
+        static_assert( std::is_same_v<decltype(r.begin()), const volatile std::uint8_t *> );
+        static_assert( std::is_same_v<decltype(r.cbegin()), const volatile std::uint8_t *> );
 
-        test_sync_pool();
+        const auto& cr{r};
+        static_assert( std::is_same_v<decltype(cr[0]), const volatile std::uint8_t&> );
+        static_assert( std::is_same_v<decltype(cr.begin()), const volatile std::uint8_t *> );
+        static_assert( std::is_same_v<decltype(cr.cbegin()), const volatile std::uint8_t *> );
     }
     void test_sync_pool() {
         std::pmr::synchronized_pool_resource pool{new ShM_Resource};
@@ -31,7 +48,7 @@ struct Tester {
 
         for (auto i : std::views::iota(0u, w.size))
             w[i] = std::rand();
-        
+
         auto view = w.pretty_memory_view();
         // static_assert(std::is_same_v<decltype(view), std::string>);
         println(view);
@@ -44,5 +61,10 @@ struct Tester {
     }
     void println(auto arg) {
         std::println(stderr, "{}", arg);
+    }
+    void scratch() {
+    }
+    void list_shm() {
+        std::system("ls -al /dev/shm; echo");
     }
 };
