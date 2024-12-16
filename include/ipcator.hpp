@@ -12,6 +12,7 @@
 #include <memory>
 #include <memory_resource>
 #include <new>
+#include <ostream>
 #include <print>
 #include <random>
 #include <ranges>
@@ -19,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <experimental/type_traits>
 #include <unordered_map>
 #include <utility>
 #include <unistd.h>  // close, ftruncate, getpagesize
@@ -101,12 +103,12 @@ struct Shared_Memory {
     const std::string name;  // Shared memory object 的名字, 格式为 "/Abc123".
 
     // 必须先确认需求 (`size') 才能向 kernel 请求映射.
-    const std::size_t size;  // 通常只有 writer 会关注该字段.
+    const std::function<std::size_t()> size;  // 通常只有 writer 会关注该字段.
     std::conditional_t<creat, void, const void> *const area;  // Kernel 将共享内存映射到进程地址空间的位置.
 
 
     Shared_Memory(const std::string name, const std::size_t size) requires(creat)
-    : name{name}, size{size}, area{map_shm<creat>(name, size)} {
+    : name{name}, size{[=]{return size;}}, area{map_shm<creat>(name, size)} {
         if (DEBUG)
             // 既读取又写入, 以确保这块内存被正确地映射了, 且已取得读写权限.
             for (auto& byte : *this)
@@ -114,10 +116,10 @@ struct Shared_Memory {
     }
     // TODO:  或许也允许 reader 指定 size?  虽然这并不能节约内存.
     Shared_Memory(const std::string name) requires(!creat)
-    : name{name}, size{
-        // `size' 可以在计算 `area' 的过程中生成, 但这会导致
-        // 延迟初始化和相应的 warning.  所以必须在此计算.
-        [&] -> decltype(this->size) {
+    : name{name}, size{[
+        size = [&] {
+            // `size' 可以在计算 `area' 的过程中生成, 但这会导致
+            // 延迟初始化和相应的 warning.  所以必须在此计算.
             struct stat shm;
             const auto fd = shm_open(name.c_str(), O_RDONLY, 0444);
             assert(fd != -1);
@@ -125,7 +127,7 @@ struct Shared_Memory {
             close(fd);
             return shm.st_size;
         }()
-    }, area{map_shm(name, this->size)} {
+    ]{return size;}}, area{map_shm(name, std::size(*this))} {
         if (DEBUG)
             // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
             for (auto byte : std::as_const(*this))
@@ -146,7 +148,7 @@ struct Shared_Memory {
             // 此后 `shm_open' 尝试都将失败.
             // 当所有 shm 都被 `munmap'ed 后, 共享内存将被 deallocate.
 
-        munmap(const_cast<void *>(this->area), this->size);
+        munmap(const_cast<void *>(this->area), std::size(*this));
     }
 
     auto operator==(this const auto& self, decltype(self) other) {
@@ -166,7 +168,7 @@ struct Shared_Memory {
     }
 
     auto operator[](this auto& self, const std::size_t i) -> volatile auto& {
-        assert(i < self.size);
+        assert(i < std::size(self));
         return static_cast<
             std::conditional_t<
                 std::is_const_v<std::remove_reference_t<decltype(self)>> || !creat,
@@ -191,16 +193,20 @@ struct Shared_Memory {
     }
 
     auto begin(this auto& self) { return &self[0]; }
-    auto end(this auto& self)   { return self.begin() + self.size; }
+    auto end(this auto& self)   { return self.begin() + std::size(self); }
     auto cbegin() const { return this->begin(); }
     auto cend()   const { return this->end(); }
+
+    friend auto operator<<(std::ostream& out, const Shared_Memory& shm) -> decltype(auto) {
+        return out << std::format("{}", shm);
+    }
 };
 template <auto creat>
 struct std::hash<Shared_Memory<creat>> {
     /* 只校验字节数组.  要判断是否相等, 使用更严格的 `operator=='.  */
     auto operator()(const auto& shm) const noexcept {
         return std::hash<decltype(shm.area)>{}(shm.area)
-               ^ std::hash<decltype(shm.size)>{}(shm.size); 
+               ^ std::hash<decltype(std::size(shm))>{}(std::size(shm)); 
     }
 };
 template <auto creat>
@@ -210,11 +216,12 @@ struct std::formatter<Shared_Memory<creat>> {
     }
     auto format(const Shared_Memory<creat>& obj, auto& context) const {
         static const auto obj_constructor = std::format("Shared_Memory<{}>", creat);
-
         return std::format_to(
             context.out(),
-            R"({{ "constructor": "{}", "name": "{}", "size": {}, "&area": {} }})",
-            obj_constructor, obj.name, obj.size, obj.area
+            creat
+            ? R"({{ "constructor": "{}" , "name": "{}", "size": {}, "&area": {} }})"
+            : R"({{ "constructor": "{}", "name": "{}", "size": {}, "&area": {} }})",
+            obj_constructor, obj.name, std::size(obj), obj.area
         );
     }
 };
@@ -226,6 +233,7 @@ Shared_Memory(
 ) -> Shared_Memory<false>;
 static_assert( !std::movable<Shared_Memory<true>> );
 static_assert( !std::movable<Shared_Memory<false>> );
+
 
 namespace {
     /*
@@ -242,13 +250,13 @@ namespace {
 
         // 在 shm obj 的名字中包含一个顺序递增的计数字段:
         constinit static std::atomic_uint cnt;
-        const auto base_name_dot = std::format(
-            "{}-{:06}.", prefix,
+        const auto base_name = std::format(
+            "{}-{:06}", prefix,
             1 + cnt.fetch_add(1, std::memory_order_relaxed)
         );
 
         static const auto suffix = std::ranges::fold_left(
-            std::views::iota(base_name_dot.length(), 255u - "/dev/shm/"s.length())
+            std::views::iota(("/dev/shm/" + base_name + '.').length(), 255u)
             | std::views::transform([
                 available_chars,
                 gen = std::mt19937{std::random_device{}()},
@@ -259,8 +267,8 @@ namespace {
             ""s, std::plus<>{}
         );
 
-        assert(("/dev/shm/" + base_name_dot + suffix).length() == 255);
-        return '/' + base_name_dot + suffix;
+        assert(("/dev/shm/" + base_name + '.' + suffix).length() == 255);
+        return '/' + base_name + '.' + suffix;
     }
 }
 
@@ -281,6 +289,8 @@ namespace {
         area, size  \
     )  \
 )
+
+
 /*
  * 按需创建并拥有若干 `Shared_Memory<true>',
  * 以向下游提供 shm 页面作为 memory resource.
@@ -318,7 +328,7 @@ class ShM_Resource: public std::pmr::memory_resource {
     void do_deallocate(void *const area, const std::size_t size, [[maybe_unused]] std::size_t) override {
         IPCATOR_LOG_DEALLOC();
         const auto whatcanisay_shm_out = std::move(this->shm_dict.extract(area).mapped());
-        assert(whatcanisay_shm_out->size == size);
+        assert(std::size(*whatcanisay_shm_out) == size);
     }
     bool do_is_equal(const std::pmr::memory_resource& that) const noexcept override {
         return this == &that;
@@ -381,17 +391,19 @@ static_assert( !std::copyable<Monotonic_ShM_Buffer> );
  * 以 `ShM_Resource' 为上游的
  */
 template <bool sync>
-struct ShM_Allocator {
-    std::conditional_t<
-        sync,
-        std::pmr::synchronized_pool_resource,
-        std::pmr::unsynchronized_pool_resource
-    > pool;
-
-    ShM_Allocator(/* args */)
-    : pool{
+struct ShM_Pool
+: private ShM_Resource, public std::conditional_t<
+    sync,
+    std::pmr::synchronized_pool_resource,
+    std::pmr::unsynchronized_pool_resource
+> {
+    using midstream_t
+        = typename std::tr2::direct_bases<ShM_Pool>::type::rest::first;
+    ShM_Pool(/* args */)
+    : midstream_t{
         std::pmr::pool_options{
-            .largest_required_pool_block = getpagesize()
+            // 向上游申请内存的🚪≥页表大小, 这样上游就不会收到零碎的内存分配请求.
+            .largest_required_pool_block = getpagesize() - 1
         }
     } {}
 };

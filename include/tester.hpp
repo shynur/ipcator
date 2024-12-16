@@ -1,5 +1,6 @@
 #include "ipcator.hpp"
 #include <vector>
+#include <iostream>
 
 
 struct Tester {
@@ -12,7 +13,10 @@ struct Tester {
         test_fmt();
     }
     void test_fmt() {
-        std::println("{}", Shared_Memory{"/wq",2});
+        Shared_Memory a{"/wq", 2};
+        Shared_Memory<false> b{"/wq"}, c{"/wq"};
+        std::println("{}", a);
+        std::clog << b << ' ' << c << '\n';
     }
     void test_const() {
         Shared_Memory<true> w{"/ipcator123", 256};
@@ -58,7 +62,7 @@ struct Tester {
         Shared_Memory<true> w{"/ipcator123", 233};
         Shared_Memory<false> r{"/ipcator123"};
 
-        for (auto i : std::views::iota(0u, w.size))
+        for (auto i : std::views::iota(0u, std::size(w)))
             w[i] = std::rand();
 
         auto view = w.pretty_memory_view();
