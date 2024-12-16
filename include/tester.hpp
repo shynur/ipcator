@@ -1,21 +1,31 @@
 #include "ipcator.hpp"
 #include <vector>
 #include <iostream>
-#include <tr2/type_traits>
 #include <print>
+#include <thread>
 
 
 struct Tester {
     Tester() {
-        print_sys_info(), println("");
-        test_shm(),println("");
-        test_UUName(),println("");
-        test_sync_pool(),println("");
-        test_const(),println("");
-        test_fmt(),println("");
-        std::clog << typeid(
-            typename std::tr2::direct_bases<ShM_Pool<true>>::type::first::type
-        ).name();
+        //print_sys_info(), println("");
+        //test_shm(),println("");
+        //test_UUName(),println("");
+        //test_sync_pool(),println("");
+        //test_const(),println("");
+        //test_fmt(),println("");
+        //test_pool(),println("");
+        const ShM_Resource shm;
+        std::println("{}", shm);
+    }
+    void test_pool() {
+        for (auto _ : std::views::iota(0, 8))
+            std::jthread{
+                []{
+                    Monotonic_ShM_Buffer p;
+                    for (auto _ : std::views::iota(0, 100))
+                        std::ignore = p.allocate(std::rand() % 1024);
+                }
+            };
     }
     void test_fmt() {
         Shared_Memory a{"/wq", 2};

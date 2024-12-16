@@ -38,7 +38,7 @@ namespace {
 
 
 namespace {
-    /* 
+    /*
      * 共享内存大小不必成为📄页表大小的整数倍, 但可以提高内存♻️利用率.
      */
     inline auto ceil_to_page_size(const std::size_t min_length) -> std::size_t {
@@ -50,7 +50,7 @@ namespace {
 
 
 namespace {
-    /* 
+    /*
      * 给定 shared memory object 的名字, 创建/打开 📂 shm obj,
      * 并将其映射到进程自身的地址空间中.  对于 reader, 期望其
      * 提供的 ‘size’ 恰好和 shm obj 的大小相等, 此处不再重新计算.
@@ -113,7 +113,7 @@ struct Shared_Memory {
             for (auto& byte : *this)
                 byte ^= byte;
     }
-    /* 
+    /*
      * 根据名字打开对应的 shm obj.  不允许 reader 指定 ‘size’,
      * 因为这是🈚意义的.  Reader 打开的是已经存在于内存中的 shm
      * obj, 占用大小已经确定, 更小的 ‘size’ 并不能节约系统资源.
@@ -218,7 +218,7 @@ struct std::hash<Shared_Memory<creat>> {
     /* 只校验字节数组.  要判断是否相等, 使用更严格的 ‘operator==’.  */
     auto operator()(const auto& shm) const noexcept {
         return std::hash<decltype(shm.area)>{}(shm.area)
-               ^ std::hash<decltype(std::size(shm))>{}(std::size(shm)); 
+               ^ std::hash<decltype(std::size(shm))>{}(std::size(shm));
     }
 };
 
@@ -252,7 +252,7 @@ namespace {
      * 所以生成的名字必须足够长, 📉降低碰撞率.
      */
     auto generate_shm_UUName() noexcept {
-        constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator"sv; 
+        constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator"sv;
         constexpr auto available_chars = "0123456789"
                                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                                          "abcdefghijklmnopqrstuvwxyz"sv;
@@ -282,12 +282,13 @@ namespace {
 }
 
 
-#define IPCATOR_LOG_ALLO_OR_DEALLOC()  void(  \
+#define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  void(  \
     DEBUG && std::clog <<  \
         std::source_location::current().function_name() + "\n"s  \
-        + std::format(  \
-            "\033[32m\tsize={}, &area={}, alignment={}\033[0m\n",  \
-            size, area, alignment  \
+        + std::vformat(  \
+            (color == "green"sv ? "\033[32m" : "\033[31m")  \
+            + "\tsize={}, &area={}, alignment={}\033[0m\n"s,  \
+            std::make_format_args(size, area, alignment)  \
         )  \
 )
 
@@ -324,12 +325,11 @@ class ShM_Resource: public std::pmr::memory_resource {
             this->resources.emplace(shm->area, shm);
 
             const auto area = shm->area;
-            IPCATOR_LOG_ALLO_OR_DEALLOC();
+            IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]) override {
-            IPCATOR_LOG_ALLO_OR_DEALLOC();
+            IPCATOR_LOG_ALLO_OR_DEALLOC("red");
             const auto whatcanisay_shm_out = std::move(
                 this->resources.extract(area).mapped()
             );
@@ -338,7 +338,6 @@ class ShM_Resource: public std::pmr::memory_resource {
                 && std::size(*whatcanisay_shm_out) <= ceil_to_page_size(size)
             );
         }
-
         bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
             if (const auto that = dynamic_cast<decltype(this)>(&other))
                 return &this->resources == &that->resources;
@@ -348,15 +347,33 @@ class ShM_Resource: public std::pmr::memory_resource {
 
     public:
         auto get_resources(this auto&& self) -> decltype(auto) {
-            if constexpr (std::is_lvalue_reference_v<decltype(self)>) {
-                std::clog << "const ShM_Resource& \n";
+            if constexpr (
+                std::disjunction<
+                    std::is_lvalue_reference<decltype(self)>,
+                    std::is_const<typename std::remove_reference<decltype(self)>::type>
+                >::value
+            )
                 return std::as_const(self.resources);
-            } else {
-                std::clog << "      ShM_Resource&&\n";
+            else
                 return std::move(self.resources);
-            }
         }
 };
+
+template <>
+struct std::formatter<ShM_Resource> {
+    constexpr auto parse(const auto& parser) {
+        return parser.end();
+    }
+    auto format(const auto& resrc, auto& context) const {
+        constexpr auto obj_constructor = "ShM_Resource";
+        return std::format_to(
+            context.out(),
+            R"({{ "constructor": "{}" }})",
+            obj_constructor  // TODO
+        );
+    }
+};
+
 static_assert( std::movable<ShM_Resource> );
 
 
@@ -364,51 +381,38 @@ static_assert( std::movable<ShM_Resource> );
  * 以 ‘ShM_Resource’ 为⬆️游的单调增长 buffer.  优先使用⬆️游上次
  * 下发内存时未能用到的区域响应 ‘allocate’, 而不是再次申请内存资源.
  */
-class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
-        ShM_Resource resrc = {};
-        std::pmr::monotonic_buffer_resource buffer;
-
-    protected:
-        void *do_allocate(const std::size_t size, const std::size_t alignment) override {
-            const auto area = this->buffer.allocate(
-                size, alignment
-            );
-            IPCATOR_LOG_ALLO_OR_DEALLOC();
-            return area;
-        }
-
-        void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
-            IPCATOR_LOG_ALLO_OR_DEALLOC();
-
-            // 虚晃一枪; actually no-op.
-            // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
-            this->buffer.deallocate(area, size, alignment);
-        }
-
-        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
-            if (const auto that = dynamic_cast<decltype(this)>(&other))
-                return this->buffer == that->buffer;
-            else
-                return this->buffer == other;
-        }
-
-    public:
-        /* 
+struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
+        /*
          * 设定缓冲区的初始大小, 但实际是惰性分配的💤.
          * ‘initial_size’ 如果不是📄页表大小的整数倍,
          * 几乎_一定_会浪费空间.
          */
         Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
-        : buffer{
+        : monotonic_buffer_resource{
             ceil_to_page_size(initial_size),
-            &this->resrc,
+            new ShM_Resource,
         } {}
-
-        auto release(this auto& self, auto&&... args) -> decltype(auto) {
-            return self.buffer.release(std::forward(args)...);
+        ~Monotonic_ShM_Buffer() {
+            this->release();
+            delete static_cast<ShM_Resource *>(
+                this->upstream_resource()
+            );
         }
-        auto upstream_resource(this auto& self, auto&&... args) -> decltype(auto) {
-            return self.buffer.upstream_resource(std::forward(args)...);
+
+    protected:
+        void *do_allocate(const std::size_t size, const std::size_t alignment) override {
+            const auto area = this->monotonic_buffer_resource::do_allocate(
+                size, alignment
+            );
+            IPCATOR_LOG_ALLO_OR_DEALLOC("green");
+            return area;
+        }
+        void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
+            IPCATOR_LOG_ALLO_OR_DEALLOC("red");
+
+            // 虚晃一枪; actually no-op.
+            // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
+            this->monotonic_buffer_resource::deallocate(area, size, alignment);
         }
 };
 
@@ -421,57 +425,45 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
  * 模板参数 ‘sync’ 表示是否线程安全.  令 ‘sync=false’ 有🚀更好的性能.
  */
 template <bool sync>
-class ShM_Pool: public std::pmr::memory_resource {
-        ShM_Resource resrc = {};
-        std::conditional_t<
+class ShM_Pool: public std::conditional_t<
+    sync,
+    std::pmr::synchronized_pool_resource,
+    std::pmr::unsynchronized_pool_resource
+> {
+        using midstream_pool_t = std::conditional_t<
             sync,
             std::pmr::synchronized_pool_resource,
             std::pmr::unsynchronized_pool_resource
-        > pool;
+        >;
 
     protected:
         void *do_allocate(const std::size_t size, const std::size_t alignment) override {
-            const auto area = this->pool.allocate(
+            const auto area = this->midstream_pool_t::do_allocate(
                 size, alignment
             );
-            IPCATOR_LOG_ALLO_OR_DEALLOC();
+            IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
-            IPCATOR_LOG_ALLO_OR_DEALLOC();
-            this->pool.deallocate(area, size, alignment);
-        }
-
-        friend class ShM_Pool<!sync>;
-        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
-            if (const auto that = dynamic_cast<const ShM_Pool<true> *>(&other))
-                return this->pool == that->pool;
-            else if (const auto that = dynamic_cast<const ShM_Pool<false> *>(&other))
-                return this->pool == that->pool;
-
-            return this->pool == other;
+            IPCATOR_LOG_ALLO_OR_DEALLOC("red");
+            this->midstream_pool_t::do_deallocate(area, size, alignment);
         }
 
     public:
         ShM_Pool(const std::pmr::pool_options& options = {.largest_required_pool_block=1})
-        : pool{
+        : midstream_pool_t{
             decltype(options){
                 .max_blocks_per_chunk = options.max_blocks_per_chunk,
                 .largest_required_pool_block = ceil_to_page_size(
                     options.largest_required_pool_block
-                )  // 向⬆️游申请内存的🚪≥页表大小, 避免零碎的请求.
+                ),  // 向⬆️游申请内存的🚪≥页表大小, 避免零碎的请求.
             },
-            &this->resrc,
+            new ShM_Resource,
         } {}
-
-        auto release(this auto& self, auto&&... args) -> decltype(auto) {
-            return self.pool.release(std::forward(args)...);
-        }
-        auto upstream_resource(this auto& self, auto&&... args) -> decltype(auto) {
-            return self.pool.upstream_resource(std::forward(args)...);
-        }
-        auto options(this auto& self, auto&&... args) -> decltype(auto) {
-            return self.pool.options(std::forward(args)...);
+        ~ShM_Pool() {
+            this->release();
+            delete static_cast<ShM_Resource *>(
+                this->upstream_resource()
+            );
         }
 };
