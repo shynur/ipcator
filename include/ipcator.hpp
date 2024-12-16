@@ -5,16 +5,12 @@
 #include <cassert>
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <format>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <memory_resource>
 #include <new>
-#include <optional>
 #include <ostream>
 #include <random>
 #include <ranges>
@@ -245,6 +241,7 @@ struct std::formatter<Shared_Memory<creat>> {
 
 static_assert( !std::movable<Shared_Memory<true>> );
 static_assert( !std::movable<Shared_Memory<false>> );
+static_assert( !std::copy_constructible<Shared_Memory<true>> );
 
 
 namespace {
@@ -285,14 +282,13 @@ namespace {
 }
 
 
-#define IPCATOR_LOG_ALLO_OR_DEALLOC()  (  \
-    void(  \
-        DEBUG  && std::clog << std::format(  \
-            "`{}`\n" "\033[32m\tsize={}, &area={}, alignment={}\033[0m",  \
-            std::source_location::current().function_name(),  \
+#define IPCATOR_LOG_ALLO_OR_DEALLOC()  void(  \
+    DEBUG && std::clog <<  \
+        std::source_location::current().function_name() + "\n"s  \
+        + std::format(  \
+            "\033[32m\tsize={}, &area={}, alignment={}\033[0m\n",  \
             size, area, alignment  \
         )  \
-    )  \
 )
 
 
@@ -304,52 +300,61 @@ class ShM_Resource: public std::pmr::memory_resource {
     std::unordered_map<void *, std::unique_ptr<Shared_Memory<true>>> resources;
     // 恒有 ```resources.at(given_ptr)->area == given_ptr```.
 
-    void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
-        if (alignment > getpagesize() + 0u) {
-            struct TooLargeAlignment: std::bad_alloc {
-                const std::string message;
-                TooLargeAlignment(const std::size_t demanded_alignment) noexcept
-                : message{
-                    std::format(
-                        "请求分配的字节数组要求按 {} 对齐, 超出了页表大小 (即 {}).",
-                        demanded_alignment,
-                        getpagesize()
-                    )
-                } {}
-                const char *what() const noexcept override {
-                    return message.c_str();
-                }
-            };
-            throw TooLargeAlignment{alignment};
+    protected:
+        void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
+            if (alignment > getpagesize() + 0u) {
+                struct TooLargeAlignment: std::bad_alloc {
+                    const std::string message;
+                    TooLargeAlignment(const std::size_t demanded_alignment) noexcept
+                    : message{
+                        std::format(
+                            "请求分配的字节数组要求按 {} 对齐, 超出了页表大小 (即 {}).",
+                            demanded_alignment,
+                            getpagesize()
+                        )
+                    } {}
+                    const char *what() const noexcept override {
+                        return message.c_str();
+                    }
+                };
+                throw TooLargeAlignment{alignment};
+            }
+
+            const auto shm = new Shared_Memory{generate_shm_UUName(), size};
+            this->resources.emplace(shm->area, shm);
+
+            const auto area = shm->area;
+            IPCATOR_LOG_ALLO_OR_DEALLOC();
+            return area;
         }
 
-        const auto shm = new Shared_Memory{generate_shm_UUName(), size};
-        this->resources.emplace(shm->area, shm);
+        void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]) override {
+            IPCATOR_LOG_ALLO_OR_DEALLOC();
+            const auto whatcanisay_shm_out = std::move(
+                this->resources.extract(area).mapped()
+            );
+            assert(
+                size <= std::size(*whatcanisay_shm_out)
+                && std::size(*whatcanisay_shm_out) <= ceil_to_page_size(size)
+            );
+        }
 
-        const auto area = shm->area;
-        IPCATOR_LOG_ALLO_OR_DEALLOC();
-        return area;
-    }
-    void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]) override {
-        IPCATOR_LOG_ALLO_OR_DEALLOC();
-        const auto whatcanisay_shm_out = std::move(
-            this->resources.extract(area).mapped()
-        );
-        assert(std::size(*whatcanisay_shm_out) == size);
-    }
-    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
-        if (const auto that = dynamic_cast<decltype(this)>(&other))
-            if (this == that)
-                return true;
-            else
+        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+            if (const auto that = dynamic_cast<decltype(this)>(&other))
                 return &this->resources == &that->resources;
-        else
-            return false;
-    }
+            else
+                return false;
+        }
 
     public:
-        auto& get_resources() const {
-            return this->resources;
+        auto get_resources(this auto&& self) -> decltype(auto) {
+            if constexpr (std::is_lvalue_reference_v<decltype(self)>) {
+                std::clog << "const ShM_Resource& \n";
+                return std::as_const(self.resources);
+            } else {
+                std::clog << "      ShM_Resource&&\n";
+                return std::move(self.resources);
+            }
         }
 };
 static_assert( std::movable<ShM_Resource> );
@@ -363,6 +368,7 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
         ShM_Resource resrc = {};
         std::pmr::monotonic_buffer_resource buffer;
 
+    protected:
         void *do_allocate(const std::size_t size, const std::size_t alignment) override {
             const auto area = this->buffer.allocate(
                 size, alignment
@@ -370,49 +376,41 @@ class Monotonic_ShM_Buffer: public std::pmr::memory_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC();
             return area;
         }
+
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC();
 
             // 虚晃一枪; actually no-op.
-            // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体是空的.
+            // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
             this->buffer.deallocate(area, size, alignment);
         }
+
         bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
             if (const auto that = dynamic_cast<decltype(this)>(&other))
-                if (this == that)
-                    return this == that;
-                else
-                    return this->buffer == that->buffer;
-
-            if (const auto that = dynamic_cast<decltype(&this->buffer)>(&other))
-                return this->buffer == *that;
-
-            return this == &other;
+                return this->buffer == that->buffer;
+            else
+                return this->buffer == other;
         }
+
     public:
         /* 
          * 设定缓冲区的初始大小, 但实际是惰性分配的💤.
          * ‘initial_size’ 如果不是📄页表大小的整数倍,
          * 几乎_一定_会浪费空间.
          */
-        Monotonic_ShM_Buffer(const std::size_t initial_size = getpagesize())
+        Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
         : buffer{
-            ceil_to_page_size(initial_size or 1),
-            &this->resrc
+            ceil_to_page_size(initial_size),
+            &this->resrc,
         } {}
 
-        auto upstream_resource() const {
-            return &this->resrc;
+        auto release(this auto& self, auto&&... args) -> decltype(auto) {
+            return self.buffer.release(std::forward(args)...);
         }
-
-        /* 强行释放所有空间.  */
-        void release() {
-            this->buffer.release();
-            assert(this->upstream_resource()->get_resources().empty());
+        auto upstream_resource(this auto& self, auto&&... args) -> decltype(auto) {
+            return self.buffer.upstream_resource(std::forward(args)...);
         }
 };
-static_assert( !std::movable<Monotonic_ShM_Buffer> );
-static_assert( !std::copyable<Monotonic_ShM_Buffer> );
 
 
 /*
@@ -423,50 +421,57 @@ static_assert( !std::copyable<Monotonic_ShM_Buffer> );
  * 模板参数 ‘sync’ 表示是否线程安全.  令 ‘sync=false’ 有🚀更好的性能.
  */
 template <bool sync>
-class ShM_Pool: public std::conditional_t<
-    sync,
-    std::pmr::synchronized_pool_resource,
-    std::pmr::unsynchronized_pool_resource
-> {
-    template <bool use_sync = sync>
-    using midstream_t = std::conditional_t<
-        use_sync,
-        std::pmr::synchronized_pool_resource,
-        std::pmr::unsynchronized_pool_resource
-    >;  // i.e. ‘std::tr2::direct_bases<ShM_Pool>::type::first::type’.
-    ShM_Resource resrc = {};
+class ShM_Pool: public std::pmr::memory_resource {
+        ShM_Resource resrc = {};
+        std::conditional_t<
+            sync,
+            std::pmr::synchronized_pool_resource,
+            std::pmr::unsynchronized_pool_resource
+        > pool;
 
-    void *do_allocate(const std::size_t size, const std::size_t alignment) override {
-        const auto area = this->midstream_t<>::allocate(
-            size, alignment
-        );
-        IPCATOR_LOG_ALLO_OR_DEALLOC();
-        return area;
-    }
-    void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
-        IPCATOR_LOG_ALLO_OR_DEALLOC();
-        this->midstream_t<>::deallocate(area, size, alignment);
-    }
-    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
-        if (const decltype(&other) that
-                = std::uintptr_t(dynamic_cast<midstream_t<true>  *>(&other))
-                | std::uintptr_t(dynamic_cast<midstream_t<false> *>(&other)))
-            return this->midstream_t<>::operator==(*that);
-        else
-            return false;
-    }
+    protected:
+        void *do_allocate(const std::size_t size, const std::size_t alignment) override {
+            const auto area = this->pool.allocate(
+                size, alignment
+            );
+            IPCATOR_LOG_ALLO_OR_DEALLOC();
+            return area;
+        }
+
+        void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
+            IPCATOR_LOG_ALLO_OR_DEALLOC();
+            this->pool.deallocate(area, size, alignment);
+        }
+
+        friend class ShM_Pool<!sync>;
+        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+            if (const auto that = dynamic_cast<const ShM_Pool<true> *>(&other))
+                return this->pool == that->pool;
+            else if (const auto that = dynamic_cast<const ShM_Pool<false> *>(&other))
+                return this->pool == that->pool;
+
+            return this->pool == other;
+        }
 
     public:
-        ShM_Pool(const std::optional<std::pmr::pool_options> options = {})
-        : midstream_t<>{
-            options.value_or(std::pmr::pool_options{
-                // 向⬆️游申请内存的🚪≥页表大小, 这样
-                // ⬆️游就不会收到零碎的内存分配请求.
-                .largest_required_pool_block = getpagesize() - 1
-            }),
-            &this->resrc
+        ShM_Pool(const std::pmr::pool_options& options = {.largest_required_pool_block=1})
+        : pool{
+            decltype(options){
+                .max_blocks_per_chunk = options.max_blocks_per_chunk,
+                .largest_required_pool_block = ceil_to_page_size(
+                    options.largest_required_pool_block
+                )  // 向⬆️游申请内存的🚪≥页表大小, 避免零碎的请求.
+            },
+            &this->resrc,
         } {}
-        ~ShM_Pool() override {
-            this->midstream_t<>::release();
+
+        auto release(this auto& self, auto&&... args) -> decltype(auto) {
+            return self.pool.release(std::forward(args)...);
+        }
+        auto upstream_resource(this auto& self, auto&&... args) -> decltype(auto) {
+            return self.pool.upstream_resource(std::forward(args)...);
+        }
+        auto options(this auto& self, auto&&... args) -> decltype(auto) {
+            return self.pool.options(std::forward(args)...);
         }
 };
