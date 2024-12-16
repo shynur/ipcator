@@ -1,6 +1,8 @@
 #include "ipcator.hpp"
 #include <vector>
 #include <iostream>
+#include <tr2/type_traits>
+#include <print>
 
 
 struct Tester {
@@ -10,7 +12,10 @@ struct Tester {
         test_UUName(),println("");
         test_sync_pool(),println("");
         test_const(),println("");
-        test_fmt();
+        test_fmt(),println("");
+        std::clog << typeid(
+            typename std::tr2::direct_bases<ShM_Pool<true>>::type::first::type
+        ).name();
     }
     void test_fmt() {
         Shared_Memory a{"/wq", 2};

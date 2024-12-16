@@ -3,6 +3,7 @@ CXX = g++
 CXXFLAGS = -std=c++23  \
            -O0 -ggdb -g3  \
            -Wpedantic -Wall -W  \
+					 -Wno-dangling-else  \
            -Iinclude
 LDFLAGS = -lrt
 
@@ -22,7 +23,7 @@ bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 
 bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
-	$(CXX) $(CXXFLAGS) -g0 -Ofast $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+	time $(CXX) $(CXXFLAGS) -g0 -Ofast $(LDFLAGS) -o $@ -D'NDEBUG'  $<
 
 .PHONY: git
 git:
