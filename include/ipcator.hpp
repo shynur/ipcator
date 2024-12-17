@@ -426,7 +426,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 >
             >,
             const Shared_Memory<true> *, std::monostate
-        > last_inserted [[no_unique_address,indeterminate]];
+        > last_inserted [[indeterminate,no_unique_address]];
 };
 
 template <template <typename K, typename V> class map_t>

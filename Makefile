@@ -1,9 +1,12 @@
 SHELL = bash
 CXX = g++
 CXXFLAGS = -std=c++23  \
-           -O0 -ggdb -g3  \
+           -O0 -fno-omit-frame-pointer  \
+           -ggdb3 -fvar-tracking -gcolumn-info -femit-class-debug-always  \
+                  -gstatement-frontiers -fno-eliminate-unused-debug-types  \
+                  -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
+                  -fno-eliminate-unused-debug-symbols  \
            -Wpedantic -Wall -W  \
-					 -Wno-dangling-else  \
            -Iinclude
 LDFLAGS = -lrt
 
@@ -27,7 +30,8 @@ bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 
 .PHONY: git
 git:
-	git commit -av
+	git add .
+	git commit -v
 	git push
 
 .PHONY: clean

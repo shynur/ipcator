@@ -64,7 +64,7 @@ struct Tester {
         /* 内部使用哈希表的资源管理器 */
         {
             ShM_Resource<std::unordered_map> resrc_hash;
-            auto addr = resrc_hash.allocate(100);
+            std::ignore = resrc_hash.allocate(100);
 
             // 查看内部信息, 例如最近一次注册的是哪块共享内存:
             std::println(
