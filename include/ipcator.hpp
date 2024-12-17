@@ -164,9 +164,9 @@ struct Shared_Memory {
         // 对于 reader 来说, 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
         if constexpr (!creat) {
             const auto is_equal = self.name == other.name;
-            is_equal && assert(
+            is_equal ? assert(
                 std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other)
-            );
+            ) : void();
             return is_equal;
         }
 
@@ -218,8 +218,9 @@ template <auto creat>
 struct std::hash<Shared_Memory<creat>> {
     /* 只校验字节数组.  要判断是否相等, 使用更严格的 ‘operator==’.  */
     auto operator()(const auto& shm) const noexcept {
-        return std::hash<decltype(shm.area)>{}(shm.area)
-               ^ std::hash<decltype(std::size(shm))>{}(std::size(shm));
+        return std::hash<
+            decltype(shm.pretty_memory_view())
+        >{}(shm.pretty_memory_view());
     }
 };
 
@@ -425,7 +426,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 >
             >,
             const Shared_Memory<true> *, std::monostate
-        > last_inserted [[no_unique_address]];
+        > last_inserted [[no_unique_address,indeterminate]];
 };
 
 template <template <typename K, typename V> class map_t>
@@ -439,16 +440,22 @@ struct std::formatter<ShM_Resource<map_t>> {
         return p;
     }
     auto format(const auto& resrc, auto& context) const {
-        if constexpr (requires {resrc.find_area(nullptr);})
+        if constexpr (requires {resrc.find_arena(nullptr);})
             return std::format_to(
                 context.out(),
-                R"({{ "resources": #<?>, "constructor": "ShM_Resource<std::map>" }})"
+                R"({{ "resources": {{ "size": {} }}, "constructor": "ShM_Resource<std::map>" }})",
+                resrc.get_resources().size()
             );
         else if constexpr (sizeof resrc.last_inserted)
             return std::format_to(
                 context.out(),
-                R"({{ "last_inserted": {}, "resources": #<?>, "constructor": "ShM_Resource<std::unordered_map>" }})",
-                *resrc.last_inserted
+                R"({{
+    "resources": {{ "size": {} }},
+    "last_inserted":
+{},
+    "constructor": "ShM_Resource<std::unordered_map>"
+}})",
+                resrc.get_resources().size(), *resrc.last_inserted
             );
         else
             std::unreachable();

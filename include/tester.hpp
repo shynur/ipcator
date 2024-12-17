@@ -1,8 +1,5 @@
 #include "ipcator.hpp"
-#include <vector>
-#include <iostream>
 #include <print>
-#include <thread>
 
 
 struct Tester {
@@ -37,6 +34,7 @@ struct Tester {
             "另一个 reader: {}\n试一下读取:\n{}\n",
             another_reader, another_reader.pretty_memory_view()
         );
+        assert(reader == another_reader);
     }
 
     /* 原始的共享内存分配器, 一次性分配一整块共享内存, 管理多块共享内存.  */
@@ -45,9 +43,9 @@ struct Tester {
         {
             ShM_Resource resrc_map;
             auto addr1 = resrc_map.allocate(123);
-            auto addr2 = resrc_map.allocate(300);
+            std::ignore = resrc_map.allocate(300);
             // 假设在 addr1[50] 上有一个对象 obj:
-            auto obj = addr1 + 50;
+            auto obj = (char *)addr1 + 50;
             // 查询该对象在所在的共享内存:
             auto shm = resrc_map.find_arena(obj);
             std::println("\n对象 {} 位于 {}\n", (void *)obj, *shm);
@@ -66,48 +64,26 @@ struct Tester {
         /* 内部使用哈希表的资源管理器 */
         {
             ShM_Resource<std::unordered_map> resrc_hash;
+            auto addr = resrc_hash.allocate(100);
+
+            // 查看内部信息, 例如最近一次注册的是哪块共享内存:
+            std::println(
+                "`last_inserted` 字段表示上次插入的共享内存:\n{}\n",
+                resrc_hash
+            );
+
+            // `resrc_hash` 底层使用哈希表, 所以没有 `find_arena` 方法.
+            // resrc_hash.find_arena(nullptr);  ==>  Error!
         }
+
+        ShM_Resource a, b;
+        assert(a != b);
+        // 如果等于, 则由 a 分配的内存可由 b 释放.
     }
 
-    void test_pool() {
-        for (auto _ : std::views::iota(0, 8))
-            std::jthread{
-                []{
-                    Monotonic_ShM_Buffer p;
-                    for (auto _ : std::views::iota(0, 100))
-                        std::ignore = p.allocate(std::rand() % 1024);
-                }
-            };
-    }
-    void test_const() {
-        Shared_Memory<true> w{"/ipcator123", 256};
-        static_assert( std::is_same_v<decltype(w[0]), volatile std::uint8_t&> );
-        static_assert( std::is_same_v<decltype(w.begin()), volatile std::uint8_t *> );
-        static_assert( std::is_same_v<decltype(w.cbegin()), const volatile std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(w.cbegin()), const std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(w.cbegin()), volatile std::uint8_t *> );
-
-        const auto& cw{w};
-        static_assert( std::is_same_v<decltype(cw[0]), const volatile std::uint8_t&> );
-        static_assert( std::is_same_v<decltype(cw.begin()), const volatile std::uint8_t *> );
-        static_assert( std::is_same_v<decltype(cw.cbegin()), const volatile std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(cw.cbegin()), const std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(cw.cbegin()), volatile std::uint8_t *> );
-
-        Shared_Memory<false> r{"/ipcator123"};
-        static_assert( std::is_same_v<decltype(r[0]), const volatile std::uint8_t&> );
-        static_assert( std::is_same_v<decltype(r.begin()), const volatile std::uint8_t *> );
-        static_assert( std::is_same_v<decltype(r.cbegin()), const volatile std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(r.cbegin()), const std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(r.cbegin()), volatile std::uint8_t *> );
-
-        const auto& cr{r};
-        static_assert( std::is_same_v<decltype(cr[0]), const volatile std::uint8_t&> );
-        static_assert( std::is_same_v<decltype(cr.begin()), const volatile std::uint8_t *> );
-        static_assert( std::is_same_v<decltype(cr.cbegin()), const volatile std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(cr.cbegin()), const std::uint8_t *> );
-        static_assert( !std::is_same_v<decltype(cr.cbegin()), volatile std::uint8_t *> );
-    }
+    void mono_buffer() {}
+    void sync_pool() {}
+    void unsync_pool() {}
     void print_sys_info() {
         std::println(stderr, "Page Size = {}", getpagesize());
         // TODO: 打印对齐/缓存行信息.
