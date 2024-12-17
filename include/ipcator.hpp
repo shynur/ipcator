@@ -184,7 +184,7 @@ struct Shared_Memory {
     }
 
     /* 🖨️ 打印 shm 区域的内存布局.  */
-    auto pretty_memory_view(const std::size_t num_col = 32, const std::string_view space = " ") const noexcept {
+    auto pretty_memory_view(const std::size_t num_col = 16, const std::string_view space = " ") const noexcept {
         return std::ranges::fold_left(
             *this
             | std::views::chunk(num_col)
@@ -226,7 +226,12 @@ struct std::hash<Shared_Memory<creat>> {
 template <auto creat>
 struct std::formatter<Shared_Memory<creat>> {
     constexpr auto parse(const auto& parser) {
-        return parser.end();
+        auto p = parser.begin();
+
+        if (p != parser.end() && *p != '}')
+            throw std::format_error("不支持任何格式化动词.");
+
+        return p;
     }
     auto format(const auto& shm, auto& context) const {
         constexpr auto obj_constructor = [] consteval {
@@ -237,8 +242,13 @@ struct std::formatter<Shared_Memory<creat>> {
         }();
         return std::format_to(
             context.out(),
-            R"({{ "name": "{}", "size": {}, "&area": {}, "constructor": "{}" }})",
-            shm.name, std::size(shm), shm.area, obj_constructor
+            R"({{
+    "&area": {},
+    "size": {},
+    "name": "{}",
+    "constructor": "{}"
+}})",
+            shm.area, std::size(shm), shm.name, obj_constructor
         );
     }
 };
@@ -353,6 +363,17 @@ class ShM_Resource: public std::pmr::memory_resource {
         }
 
     public:
+        ~ShM_Resource() requires(DEBUG) {
+            /* 显式删除以打印日志.  */
+            while (!this->resources.empty()) {
+                auto it = this->resources.begin();
+                this->deallocate(
+                    const_cast<void *>(it->first),
+                    std::size(*it->second)
+                );
+            }
+        }
+
         auto get_resources(this auto&& self) -> decltype(auto) {
             if constexpr (
                 std::disjunction<
@@ -410,7 +431,12 @@ class ShM_Resource: public std::pmr::memory_resource {
 template <template <typename K, typename V> class map_t>
 struct std::formatter<ShM_Resource<map_t>> {
     constexpr auto parse(const auto& parser) {
-        return parser.end();
+        auto p = parser.begin();
+
+        if (p != parser.end() && *p != '}')
+            throw std::format_error("不支持任何格式化动词.");
+
+        return p;
     }
     auto format(const auto& resrc, auto& context) const {
         if constexpr (requires {resrc.find_area(nullptr);})
