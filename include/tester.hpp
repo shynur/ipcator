@@ -14,8 +14,14 @@ struct Tester {
         //test_const(),println("");
         //test_fmt(),println("");
         //test_pool(),println("");
-        const ShM_Resource shm;
-        std::println("{}", shm);
+        test_query_insert(),println("");
+    }
+    void test_query_insert() {
+        ShM_Resource<> map;
+        auto p = map.allocate(1000);
+        std::println("{}", *map.find_arena(p+300));
+
+        ShM_Resource<std::unordered_map> uom;
     }
     void test_pool() {
         for (auto _ : std::views::iota(0, 8))
@@ -29,7 +35,7 @@ struct Tester {
     }
     void test_fmt() {
         Shared_Memory a{"/wq", 2};
-        Shared_Memory<false> b{"/wq"}, c{"/wq"};
+        Shared_Memory b{"/wq"}, c{"/wq"};
         std::println("{}", a);
         std::clog << b << ' ' << c << '\n';
     }

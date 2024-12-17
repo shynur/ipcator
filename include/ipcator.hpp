@@ -8,6 +8,7 @@
 #include <format>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <memory_resource>
 #include <new>
@@ -228,13 +229,16 @@ struct std::formatter<Shared_Memory<creat>> {
         return parser.end();
     }
     auto format(const auto& shm, auto& context) const {
-        static const auto obj_constructor = std::format("Shared_Memory<{}>", creat);
+        constexpr auto obj_constructor = [] consteval {
+            if (creat)
+                return "Shared_Memory<true>";
+            else
+                return "Shared_Memory<false>";
+        }();
         return std::format_to(
             context.out(),
-            creat
-            ? R"({{ "constructor": "{}" , "name": "{}", "size": {}, "&area": {} }})"
-            : R"({{ "constructor": "{}", "name": "{}", "size": {}, "&area": {} }})",
-            obj_constructor, shm.name, std::size(shm), shm.area
+            R"({{ "name": "{}", "size": {}, "&area": {}, "constructor": "{}" }})",
+            shm.name, std::size(shm), shm.area, obj_constructor
         );
     }
 };
@@ -297,9 +301,10 @@ namespace {
  * 按需创建并拥有若干 ‘Shared_Memory<true>’,
  * 以向⬇️游提供 shm 页面作为 memory resource.
  */
+template <template <typename K, typename V> class map_t = std::map>
 class ShM_Resource: public std::pmr::memory_resource {
-    std::unordered_map<void *, std::unique_ptr<Shared_Memory<true>>> resources;
-    // 恒有 ```resources.at(given_ptr)->area == given_ptr```.
+        map_t<const void *, std::unique_ptr<Shared_Memory<true>>> resources;
+        // 恒有 ```resources.at(given_ptr)->area == given_ptr```.  TODO
 
     protected:
         void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
@@ -323,6 +328,8 @@ class ShM_Resource: public std::pmr::memory_resource {
 
             const auto shm = new Shared_Memory{generate_shm_UUName(), size};
             this->resources.emplace(shm->area, shm);
+            if constexpr (requires {this->last_inserted = shm;})
+                this->last_inserted = shm;
 
             const auto area = shm->area;
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
@@ -357,24 +364,73 @@ class ShM_Resource: public std::pmr::memory_resource {
             else
                 return std::move(self.resources);
         }
+
+        friend auto operator<<(std::ostream& out, const ShM_Resource& resrc) -> decltype(auto) {
+            return out << std::format("{}", resrc);
+        }
+
+        /*
+         * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中, 返回它的无所有权指针.
+         * 允许上层用 ‘const_cast’ 通过指针对 shm 进行修改, 在此不是未定义行为.
+         * 不允许调用它的 destructor!
+         */
+        auto find_arena(const void *const obj) const -> const auto * requires(
+            std::is_same_v<
+                decltype(this->resources),
+                std::map<
+                    typename decltype(this->resources)::key_type,
+                    typename decltype(this->resources)::mapped_type
+                >
+            >
+        ) {
+            const auto& [arena, shm] = *(
+                --this->resources.upper_bound(obj)
+            );
+            assert(arena <= obj);
+
+            return shm.get();
+        }
+        /*
+         * 记录最近一次创建的 ‘Shared_Memory’.  允许上层用
+         * ‘const_cast’ 通过指针对 shm 进行修改, 在此不是
+         * 未定义行为.  不允许调用它的 destructor!
+         */
+        std::conditional_t<
+            std::is_same_v<
+                decltype(resources),
+                std::unordered_map<
+                    typename decltype(resources)::key_type,
+                    typename decltype(resources)::mapped_type
+                >
+            >,
+            const Shared_Memory<true> *, std::monostate
+        > last_inserted [[no_unique_address]];
 };
 
-template <>
-struct std::formatter<ShM_Resource> {
+template <template <typename K, typename V> class map_t>
+struct std::formatter<ShM_Resource<map_t>> {
     constexpr auto parse(const auto& parser) {
         return parser.end();
     }
     auto format(const auto& resrc, auto& context) const {
-        constexpr auto obj_constructor = "ShM_Resource";
-        return std::format_to(
-            context.out(),
-            R"({{ "constructor": "{}" }})",
-            obj_constructor  // TODO
-        );
+        if constexpr (requires {resrc.find_area(nullptr);})
+            return std::format_to(
+                context.out(),
+                R"({{ "resources": #<?>, "constructor": "ShM_Resource<std::map>" }})"
+            );
+        else if constexpr (sizeof resrc.last_inserted)
+            return std::format_to(
+                context.out(),
+                R"({{ "last_inserted": {}, "resources": #<?>, "constructor": "ShM_Resource<std::unordered_map>" }})",
+                *resrc.last_inserted
+            );
+        else
+            std::unreachable();
     }
 };
 
-static_assert( std::movable<ShM_Resource> );
+static_assert( std::movable<ShM_Resource<std::map>> );
+static_assert( std::movable<ShM_Resource<std::unordered_map>> );
 
 
 /*
@@ -390,11 +446,11 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
         : monotonic_buffer_resource{
             ceil_to_page_size(initial_size),
-            new ShM_Resource,
+            new ShM_Resource<std::unordered_map>,
         } {}
         ~Monotonic_ShM_Buffer() {
             this->release();
-            delete static_cast<ShM_Resource *>(
+            delete static_cast<ShM_Resource<std::unordered_map> *>(
                 this->upstream_resource()
             );
         }
@@ -458,11 +514,11 @@ class ShM_Pool: public std::conditional_t<
                     options.largest_required_pool_block
                 ),  // 向⬆️游申请内存的🚪≥页表大小, 避免零碎的请求.
             },
-            new ShM_Resource,
+            new ShM_Resource<std::map>,
         } {}
         ~ShM_Pool() {
             this->release();
-            delete static_cast<ShM_Resource *>(
+            delete static_cast<ShM_Resource<std::map> *>(
                 this->upstream_resource()
             );
         }
