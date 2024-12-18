@@ -58,8 +58,7 @@ namespace {
      *   其中 ‘size’ 是要创建的 shm obj 的大小;
      * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`.
      */
-    template <bool creat = false>
-    constexpr auto map_shm = [](const auto resolve) consteval {
+    constexpr auto map_shm = []<bool creat=false>(const auto resolve) consteval {
         return [=] [[nodiscard]] (
             const std::string& name, const std::unsigned_integral auto... size
         ) requires (sizeof...(size) == creat) {
@@ -123,7 +122,7 @@ class Shared_Memory {
         std::span<
             std::conditional_t<
                 creat,
-                std::uint8_t, const volatile std::uint8_t
+                std::uint8_t, const std::uint8_t
             >
         > area;
     public:
@@ -133,7 +132,7 @@ class Shared_Memory {
         } {
             if (DEBUG)
                 // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
-                for (auto& byte : *this)
+                for (auto& byte : this->area)
                     byte ^= byte;
         }
         /*
@@ -144,19 +143,20 @@ class Shared_Memory {
         Shared_Memory(const std::string name) requires(!creat)
         : name{name}, area{
             [&] -> decltype(this->area) {
-                const auto [addr, length] = map_shm<>(name);
+                const auto [addr, length] = map_shm(name);
                 return {
                     static_cast<std::uint8_t *>(addr),
-                    length,
+                    length
                 };
             }()
         } {
-        if (DEBUG)
-            // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
-            for (auto byte : std::as_const(*this))
-                std::ignore = auto{byte};
+            if (DEBUG)
+                // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
+                for (auto byte : std::as_const(this->area))
+                    std::ignore = auto{byte};
         }
-        Shared_Memory(const Shared_Memory& other) requires(!creat)
+        template <bool other_creat>
+        Shared_Memory(const Shared_Memory<other_creat>& other) requires(!creat)
         : Shared_Memory{that.name} {
             // Reader 手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
             // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
@@ -164,65 +164,75 @@ class Shared_Memory {
             //   ```Shared_Memory a, b;```
             // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
         }
+        Shared_Memory(Shared_Memory&& other) noexcept
+        : name{std::move(other.name)}, area{std::move(other.area)} {
+            other.area = {};  // TODO: 可能是不必要的
+        }
+        friend void swap(Shared_Memory& a, Shared_Memory& b) noexcept {
+            std::swap(a.name, b.name);
+            std::swap(a.area, b.area);
+        }
+        auto& operator=(this auto& self, Shared_Memory other) {
+            std::swap(self, other);
+            return self;
+        }
         ~Shared_Memory() {
+            if (this->area.data() == nullptr)
+                return;
+
             // 🚫 Writer 将要拒绝任何新的连接请求:
             if constexpr (creat)
                 shm_unlink(this->name.c_str());
                 // 此后的 ‘shm_open’ 调用都将失败.
                 // 当所有 shm 都被 ‘munmap’ed 后, 共享内存将被 deallocate.
 
-            munmap(const_cast<void *>(this->area), std::size(*this));
+            munmap(
+                const_cast<void *>(this->area.data()),
+                std::size(this->area)
+            );
         }
 
-    auto operator==(this const auto& self, decltype(self) other) {
-        if (&self == &other)
-            return true;
+        auto get_name() const -> std::string_view { return this->name; }
 
-        // 对于 reader 来说, 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
-        if constexpr (!creat) {
-            const auto is_equal = self.name == other.name;
-            is_equal ? assert(
-                std::hash<Shared_Memory>{}(self) == std::hash<Shared_Memory>{}(other)
-            ) : void();
-            return is_equal;
+        template <bool other_creat>
+        auto operator==(this const auto& self, const Shared_Memory<other_creat>& other) {
+            // 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
+            if (self.name == other.name) {
+                assert(
+                    std::hash<decltype(self)>{}(self) == std::hash<decltype(other)>{}(other)
+                );
+                return true;
+            } else
+                return false;
         }
 
-        return false;
-    }
+        auto& operator[](this auto& self, const std::size_t i) {
+            assert(i < std::size(self.area));
 
-    auto operator[](this auto& self, const std::size_t i) -> volatile auto& {
-        assert(i < std::size(self));
-        return static_cast<
-            std::conditional_t<
-                std::is_const_v<std::remove_reference_t<decltype(self)>> || !creat,
-                const std::uint8_t, std::uint8_t
-            > *
-        >(self.area)[i];
-    }
+            if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
+                return std::as_const(self.area[i]);
+            else
+                return self.area[i];
+        }
 
-    /* 🖨️ 打印 shm 区域的内存布局.  */
-    auto pretty_memory_view(const std::size_t num_col = 16, const std::string_view space = " ") const noexcept {
-        return std::ranges::fold_left(
-            *this
-            | std::views::chunk(num_col)
-            | std::views::transform(std::bind_back(
-                std::bit_or<>{},
-                std::views::transform([](auto& B) { return std::format("{:02X}", B); })
-                | std::views::join_with(space)
-            ))
-            | std::views::join_with('\n'),
-            ""s, std::plus<>{}
-        );
-    }
+        /* 🖨️ 打印 shm 区域的内存布局.  */
+        auto pretty_memory_view(const std::size_t num_col = 16, const std::string_view space = " ") const {
+            return std::ranges::fold_left(
+                this->area
+                | std::views::chunk(num_col)
+                | std::views::transform(std::bind_back(
+                    std::bit_or<>{},
+                    std::views::transform([](auto& B) { return std::format("{:02X}", B); })
+                    | std::views::join_with(space)
+                ))
+                | std::views::join_with('\n'),
+                ""s, std::plus<>{}
+            );
+        }
 
-    auto begin(this auto& self) { return &self[0]; }
-    auto end(this auto& self)   { return self.begin() + std::size(self); }
-    auto cbegin() const { return this->begin(); }
-    auto cend()   const { return this->end(); }
-
-    friend auto operator<<(std::ostream& out, const Shared_Memory& shm) -> decltype(auto) {
-        return out << std::format("{}", shm);
-    }
+        friend auto operator<<(std::ostream& out, const Shared_Memory& shm) -> decltype(auto) {
+            return out << std::format("{}", shm);
+        }
 };
 Shared_Memory(
     std::convertible_to<std::string> auto, std::integral auto
