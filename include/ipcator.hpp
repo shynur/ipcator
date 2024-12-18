@@ -52,44 +52,63 @@ namespace {
 
 namespace {
     /*
-     * 给定 shared memory object 的名字, 创建/打开 📂 shm obj,
-     * 并将其映射到进程自身的地址空间中.  对于 reader, 期望其
-     * 提供的 ‘size’ 恰好和 shm obj 的大小相等, 此处不再重新计算.
+     * 给定 shared memory object 的名字, 创建/打开
+     * 📂 shm obj, 并将其映射到进程自身的地址空间中.
+     * - 对于 writer, 使用 `map_shm<true>(name,size)->void*`,
+     *   其中 ‘size’ 是要创建的 shm obj 的大小;
+     * - 对于 reader, 使用 `map_shm<>(name)->std::span`.
      */
     template <bool creat = false>
-    auto map_shm[[nodiscard]](const std::string& name, const std::size_t size) {
-        assert(name.length() <= 247);
-        const auto fd = shm_open(
-            name.c_str(),
-            creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,
-            0666
-        );
-        assert(fd != -1);
+    constexpr auto map_shm = [](const auto resolve) consteval {
+        return [=] [[nodiscard]] (
+            const std::string& name, const std::unsigned_integral auto... size
+        ) requires (sizeof...(size) == creat) {
 
-        if constexpr (creat) {
-            // 设置 shm obj 的大小:
-            const auto result_resize = ftruncate(fd, size);
-            assert(result_resize != -1);
-        } else
-            if (DEBUG) {
-                // 校验 ‘size’ 是否和 shm obj 的真实大小吻合.
-                struct stat shm;
-                fstat(fd, &shm);
-                assert(size == shm.st_size + 0uz);
+            assert(name.length() <= 255 - "/dev/shm"s.length());
+            const auto fd = shm_open(
+                name.c_str(),
+                creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,
+                0666
+            );
+            assert(fd != -1);
+
+            if constexpr (creat) {
+                // 设置 shm obj 的大小:
+                const auto result_resize = ftruncate(fd, size...);
+                assert(result_resize != -1);
             }
 
-        const auto area = static_cast<std::conditional_t<creat, void, const void> *>(
-            mmap(
-                nullptr, size,
-                (creat ? PROT_WRITE : 0) | PROT_READ,
-                MAP_SHARED | (!creat ? MAP_NORESERVE : 0),
-                fd, 0
-            )
+            return resolve(
+                fd,
+                [&] {
+                    if constexpr (creat)
+                        return [](const auto size, ...){return size;}(size...);
+                    else {
+                        struct stat shm;
+                        fstat(fd, &shm);
+                        return shm.st_size;
+                    }
+                }()
+            );
+        };
+    }([](const auto fd, const std::size_t size) {
+        const auto area = mmap(
+            nullptr, size,
+            (creat ? PROT_WRITE : 0) | PROT_READ,
+            MAP_SHARED | (!creat ? MAP_NORESERVE : 0),
+            fd, 0
         );
         close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
         assert(area != MAP_FAILED);
-        return area;
-    }
+
+        if constexpr (creat)
+            return area;
+        else
+            return std::span{
+                static_cast<const volatile std::byte *>(area),
+                size
+            };
+    });
 }
 
 
@@ -132,7 +151,9 @@ struct Shared_Memory {
             return shm.st_size;
         }()
     ] {return size;}}, area{
-        map_shm(name, std::size(*this))
+        static_cast<void *>(
+            const_cast<std::byte *>(map_shm<>(name).data())
+        )
     } {
         if (DEBUG)
             // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
@@ -364,14 +385,16 @@ class ShM_Resource: public std::pmr::memory_resource {
         }
 
     public:
-        ~ShM_Resource() requires(DEBUG) {
-            /* 显式删除以打印日志.  */
-            while (!this->resources.empty()) {
-                auto it = this->resources.begin();
-                this->deallocate(
-                    const_cast<void *>(it->first),
-                    std::size(*it->second)
-                );
+        ~ShM_Resource() {
+            if (DEBUG) {
+                /* 显式删除以打印日志.  */
+                while (!this->resources.empty()) {
+                    auto it = this->resources.begin();
+                    this->deallocate(
+                        const_cast<void *>(it->first),
+                        std::size(*it->second)
+                    );
+                }
             }
         }
 

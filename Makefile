@@ -1,6 +1,6 @@
 SHELL = bash
-CXX = g++
-CXXFLAGS = -std=c++23  \
+CXX = g++ -fdiagnostics-color=always
+CXXFLAGS = -std=c++26  \
            -O0 -fno-omit-frame-pointer  \
            -ggdb3 -fvar-tracking -gcolumn-info -femit-class-debug-always  \
                   -gstatement-frontiers -fno-eliminate-unused-debug-types  \
@@ -22,16 +22,27 @@ run-build:  bin/release.exe
 
 bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
-	$(CXX) $(CXXFLAGS) $(AggressiveOptimization) $(LDFLAGS) -o $@  $<
+	mkdir -p /tmp/shynur/ipcator/;  \
+	if time $(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@  $<  \
+    2> /tmp/shynur/ipcator/Makefile.stderr; then  \
+		:;  \
+	else  \
+		LASTEXITCODE=$$?;  \
+		cat /tmp/shynur/ipcator/Makefile.stderr  \
+		| sed -e 's/warning/喜报/g' -e 's/error/悲报/g';  \
+		(exit $$LASTEXITCODE)  \
+	fi
+	@echo '******编译完成******'
 
 bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
-	time $(CXX) $(CXXFLAGS) -g0 -Ofast $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+	time $(CXX) -std=c++26 -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+	@echo '******编译完成******'
 
 .PHONY: git
 git:
-	git add .
-	git commit -v
+	make run  &&  make run-build
+	git commit -av
 	git push
 
 .PHONY: clean
