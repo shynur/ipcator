@@ -208,11 +208,7 @@ class Shared_Memory {
 
         auto& operator[](this auto& self, const std::size_t i) {
             assert(i < std::size(self.area));
-
-            if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
-                return std::as_const(self.area[i]);
-            else
-                return self.area[i];
+            return *(self.begin() + i);
         }
 
         /* 🖨️ 打印 shm 区域的内存布局.  */
@@ -230,10 +226,28 @@ class Shared_Memory {
             );
         }
 
-        friend auto operator<<(std::ostream& out, const Shared_Memory& shm) -> decltype(auto) {
+        friend decltype(auto) operator<<(std::ostream& out, const Shared_Memory& shm) {
             return out << std::format("{}", shm);
         }
+
+        auto begin(this auto& self) {
+            if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
+                return this->area.cbegin();
+            else
+                return this->area.begin();
+        }
+        auto end(this auto& self) { return this->begin() + std::size(this->area); }
+        auto cbegin() const { return this->begin(); }
+        auto cend() const { return this->end(); }
+
+        auto size() const { return std::size(this->area); }
 };
+static_assert( std::movable<Shared_Memory<true>> );
+static_assert( std::movable<Shared_Memory<false>> );
+static_assert( std::swappable<Shared_Memory<true>> );
+static_assert( std::swappable<Shared_Memory<false>> );
+static_assert( !std::copy_constructible<Shared_Memory<true>> );
+static_assert( std::copy_constructible<Shared_Memory<false>> );
 Shared_Memory(
     std::convertible_to<std::string> auto, std::integral auto
 ) -> Shared_Memory<true>;
@@ -280,10 +294,6 @@ struct std::formatter<Shared_Memory<creat>> {
         );
     }
 };
-
-static_assert( !std::movable<Shared_Memory<true>> );
-static_assert( !std::movable<Shared_Memory<false>> );
-static_assert( !std::copy_constructible<Shared_Memory<true>> );
 
 
 namespace {
