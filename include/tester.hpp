@@ -1,6 +1,5 @@
 #include "ipcator.hpp"
 #include <print>
-//#include "yaShared_Memory.hpp"
 
 
 struct Tester {
@@ -8,8 +7,6 @@ struct Tester {
         print_sys_info();
         shared_memory();
         shm_resource();
-       // yaShared_Memory<true> a{"/wecwecqwe",3};
-        //yaShared_Memory<false> b{"/wecwecqwe"};
     }
 
     /* RAII 绑定共享内存 */

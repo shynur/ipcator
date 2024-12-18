@@ -29,19 +29,18 @@ bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	else  \
 		LASTEXITCODE=$$?;  \
 		cat /tmp/shynur/ipcator/Makefile.stderr  \
-		| sed -e 's/warning/喜报/g' -e 's/error/悲报/g';  \
-		(exit $$LASTEXITCODE)  \
+		| sed -e 's/warning/🤣👉/g' -e 's/error/🤡/g';  \
+		(exit $$LASTEXITCODE);  \
 	fi
-	@echo '******编译完成******'
+	@echo '********** 编译完成 **********'
 
 bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
 	time $(CXX) -std=c++26 -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
-	@echo '******编译完成******'
+	@echo '********** 编译完成 **********'
 
 .PHONY: git
 git:
-	make run  &&  make run-build
 	git commit -av
 	git push
 

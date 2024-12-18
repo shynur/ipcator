@@ -56,7 +56,7 @@ namespace {
      * 📂 shm obj, 并将其映射到进程自身的地址空间中.
      * - 对于 writer, 使用 `map_shm<true>(name,size)->void*`,
      *   其中 ‘size’ 是要创建的 shm obj 的大小;
-     * - 对于 reader, 使用 `map_shm<>(name)->std::span`.
+     * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`.
      */
     template <bool creat = false>
     constexpr auto map_shm = [](const auto resolve) consteval {
@@ -92,22 +92,24 @@ namespace {
             );
         };
     }([](const auto fd, const std::size_t size) {
-        const auto area = mmap(
+        const auto area_addr = mmap(
             nullptr, size,
             (creat ? PROT_WRITE : 0) | PROT_READ,
             MAP_SHARED | (!creat ? MAP_NORESERVE : 0),
             fd, 0
         );
         close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
-        assert(area != MAP_FAILED);
+        assert(area_addr != MAP_FAILED);
 
         if constexpr (creat)
+            return area_addr;
+        else {
+            const struct {
+                const void *addr;
+                std::size_t length;
+            } area{area_addr, size};
             return area;
-        else
-            return std::span{
-                static_cast<const volatile std::byte *>(area),
-                size
-            };
+        }
     });
 }
 
@@ -116,67 +118,61 @@ namespace {
  * 不可变的最小单元, 表示1️⃣块共享内存区域.
  */
 template <bool creat>
-struct Shared_Memory {
-    const std::string name;  // Shared memory object 的名字, 格式为 “/Abc123”.
-
-    // 必须先确认需求 (‘size’) 才能向 kernel 请求映射.
-    const std::function<std::size_t()> size;  // 通常只有 writer 会关注该字段.
-    std::conditional_t<creat, void, const void> *const area;  // Kernel 将共享内存映射到进程地址空间的位置.
-
-
-    Shared_Memory(const std::string name, const std::size_t size) requires(creat)
-    : name{name}, size{[=] {return size;}}, area{
-        map_shm<creat>(name, size)
-    } {
-        if (DEBUG)
-            // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
-            for (auto& byte : *this)
-                byte ^= byte;
-    }
-    /*
-     * 根据名字打开对应的 shm obj.  不允许 reader 指定 ‘size’,
-     * 因为这是🈚意义的.  Reader 打开的是已经存在于内存中的 shm
-     * obj, 占用大小已经确定, 更小的 ‘size’ 并不能节约系统资源.
-     */
-    Shared_Memory(const std::string name) requires(!creat)
-    : name{name}, size{[
-        size = [&] {
-            // ‘size’ 可以在计算 ‘area’ 的过程中生成, 但这会导致
-            // 延迟初始化和相应的 warning.  所以必须在此计算.
-            struct stat shm;
-            const auto fd = shm_open(name.c_str(), O_RDONLY, 0444);
-            assert(fd != -1);
-            fstat(fd, &shm);
-            close(fd);
-            return shm.st_size;
-        }()
-    ] {return size;}}, area{
-        static_cast<void *>(
-            const_cast<std::byte *>(map_shm<>(name).data())
-        )
-    } {
+class Shared_Memory {
+        std::string name;  // Shared memory object 的名字, 格式为 “/Abc123”.
+        std::span<
+            std::conditional_t<
+                creat,
+                std::uint8_t, const volatile std::uint8_t
+            >
+        > area;
+    public:
+        Shared_Memory(const std::string name, const std::size_t size) requires(creat)
+        : name{name}, area{
+            map_shm<creat>(name, size), size
+        } {
+            if (DEBUG)
+                // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
+                for (auto& byte : *this)
+                    byte ^= byte;
+        }
+        /*
+         * 根据名字打开对应的 shm obj.  不允许 reader 指定 ‘size’,
+         * 因为这是🈚意义的.  Reader 打开的是已经存在于内存中的 shm
+         * obj, 占用大小已经确定, 更小的 ‘size’ 并不能节约系统资源.
+         */
+        Shared_Memory(const std::string name) requires(!creat)
+        : name{name}, area{
+            [&] -> decltype(this->area) {
+                const auto [addr, length] = map_shm<>(name);
+                return {
+                    static_cast<std::uint8_t *>(addr),
+                    length,
+                };
+            }()
+        } {
         if (DEBUG)
             // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
             for (auto byte : std::as_const(*this))
                 std::ignore = auto{byte};
-    }
-    Shared_Memory(const Shared_Memory& that) requires(!creat)
-    : Shared_Memory{that.name} {
-        // Reader 手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
-        // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
-        // 的地址 (‘area’) 相同.  对于
-        //   ```Shared_Memory a, b;```
-        // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
-    }
-    ~Shared_Memory() {
-        // 🚫 Writer 将要拒绝任何新的连接请求:
-        if constexpr (creat)
-            shm_unlink(this->name.c_str());
-            // 此后的 ‘shm_open’ 调用都将失败.
-            // 当所有 shm 都被 ‘munmap’ed 后, 共享内存将被 deallocate.
+        }
+        Shared_Memory(const Shared_Memory& other) requires(!creat)
+        : Shared_Memory{that.name} {
+            // Reader 手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
+            // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
+            // 的地址 (‘area’) 相同.  对于
+            //   ```Shared_Memory a, b;```
+            // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
+        }
+        ~Shared_Memory() {
+            // 🚫 Writer 将要拒绝任何新的连接请求:
+            if constexpr (creat)
+                shm_unlink(this->name.c_str());
+                // 此后的 ‘shm_open’ 调用都将失败.
+                // 当所有 shm 都被 ‘munmap’ed 后, 共享内存将被 deallocate.
 
-        munmap(const_cast<void *>(this->area), std::size(*this));
-    }
+            munmap(const_cast<void *>(this->area), std::size(*this));
+        }
 
     auto operator==(this const auto& self, decltype(self) other) {
         if (&self == &other)
