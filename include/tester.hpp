@@ -23,7 +23,7 @@ struct Tester {
             writer[i] = i;
         // 但先不读取.
 
-        Shared_Memory reader{writer.name};
+        Shared_Memory<false> reader = writer;
         std::println("创建了 reader: {}\n", reader);
         // reader[0] = 1;  ==>  Error!  不允许赋值.
         // 读取 writer 写入的值:
@@ -41,18 +41,18 @@ struct Tester {
     void shm_resource() {
         /* 内部使用红黑树的资源管理器 */
         {
-            ShM_Resource resrc_map;
-            auto addr1 = resrc_map.allocate(123);
-            std::ignore = resrc_map.allocate(300);
+            ShM_Resource resrc_set;
+            auto addr1 = resrc_set.allocate(123);
+            std::ignore = resrc_set.allocate(300);
             // 假设在 addr1[50] 上有一个对象 obj:
             auto obj = (char *)addr1 + 50;
             // 查询该对象在所在的共享内存:
-            auto shm = resrc_map.find_arena(obj);
-            std::println("\n对象 {} 位于 {}\n", (void *)obj, *shm);
+            auto& shm = resrc_set.find_arena(obj);
+            std::println("\n对象 {} 位于 {}\n", (void *)obj, shm);
 
             // 打印底层注册表:
-            for (auto& [_, shm] : resrc_map.get_resources())
-                std::println("resrc_map 中的: {}\n", *shm);
+            for (auto& shm : resrc_set.get_resources())
+                std::println("resrc_map 中的: {}\n", shm);
 
             // resrc_map.get_resources().clear();  ==>  Error!  默认不可变,
             // 除非是 纯右值 或者 将亡值:
@@ -63,13 +63,13 @@ struct Tester {
 
         /* 内部使用哈希表的资源管理器 */
         {
-            ShM_Resource<std::unordered_map> resrc_hash;
-            std::ignore = resrc_hash.allocate(100);
+            ShM_Resource<std::unordered_set> resrc_uoset;
+            std::ignore = resrc_uoset.allocate(100);
 
             // 查看内部信息, 例如最近一次注册的是哪块共享内存:
             std::println(
                 "`last_inserted` 字段表示上次插入的共享内存:\n{}\n",
-                resrc_hash
+                resrc_uoset
             );
 
             // `resrc_hash` 底层使用哈希表, 所以没有 `find_arena` 方法.

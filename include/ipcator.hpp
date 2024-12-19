@@ -7,20 +7,22 @@
 #include <cstddef>
 #include <format>
 #include <functional>
-#include <iostream>
-#include <map>
+#include <iostream>  // clog
 #include <memory>
 #include <memory_resource>
-#include <new>
+#include <new>  // bad_alloc
 #include <ostream>
 #include <random>
 #include <ranges>
+#include <set>
 #include <source_location>
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <variant>  // monostate
+#include <version>
 #include <unistd.h>  // close, ftruncate, getpagesize
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED}
 #include <sys/stat.h>  // fstat, struct stat
@@ -42,7 +44,8 @@ namespace {
     /*
      * 共享内存大小不必成为📄页表大小的整数倍, 但可以提高内存♻️利用率.
      */
-    inline auto ceil_to_page_size(const std::size_t min_length) -> std::size_t {
+    inline auto ceil_to_page_size(const std::size_t min_length)
+    -> std::size_t {
         const auto current_num_pages = min_length / getpagesize();
         const bool need_one_more_page = min_length % getpagesize();
         return (current_num_pages + need_one_more_page) * getpagesize();
@@ -58,12 +61,13 @@ namespace {
      *   其中 ‘size’ 是要创建的 shm obj 的大小;
      * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`.
      */
-    constexpr auto map_shm = []<bool creat=false>(const auto resolve) consteval {
+    template <bool creat = false>
+    constexpr auto map_shm = [](const auto resolve) consteval {
         return [=] [[nodiscard]] (
             const std::string& name, const std::unsigned_integral auto... size
         ) requires (sizeof...(size) == creat) {
 
-            assert(name.length() <= 255 - "/dev/shm"s.length());
+            assert("/dev/shm"s.length() + name.length() <= 255);
             const auto fd = shm_open(
                 name.c_str(),
                 creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,
@@ -128,7 +132,8 @@ class Shared_Memory {
     public:
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
-            map_shm<creat>(name, size), size
+            static_cast<std::uint8_t *>(map_shm<creat>(name, size)),
+            size
         } {
             if (DEBUG)
                 // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
@@ -143,9 +148,9 @@ class Shared_Memory {
         Shared_Memory(const std::string name) requires(!creat)
         : name{name}, area{
             [&] -> decltype(this->area) {
-                const auto [addr, length] = map_shm(name);
+                const auto [addr, length] = map_shm<>(name);
                 return {
-                    static_cast<std::uint8_t *>(addr),
+                    static_cast<const std::uint8_t *>(addr),
                     length
                 };
             }()
@@ -155,19 +160,20 @@ class Shared_Memory {
                 for (auto byte : std::as_const(this->area))
                     std::ignore = auto{byte};
         }
-        template <bool other_creat>
-        Shared_Memory(const Shared_Memory<other_creat>& other) requires(!creat)
-        : Shared_Memory{that.name} {
+        Shared_Memory(Shared_Memory&& other) noexcept
+        : name{std::move(other.name)}, area{std::move(other.area)} {
+            other.area = {};
+        }
+        Shared_Memory(const Shared_Memory& other) requires(!creat)
+        : Shared_Memory{other.name} {
             // Reader 手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
             // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
             // 的地址 (‘area’) 相同.  对于
             //   ```Shared_Memory a, b;```
             // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
         }
-        Shared_Memory(Shared_Memory&& other) noexcept
-        : name{std::move(other.name)}, area{std::move(other.area)} {
-            other.area = {};  // TODO: 可能是不必要的
-        }
+        Shared_Memory(const Shared_Memory<!creat>& other) requires(!creat)
+        : Shared_Memory{other.get_name()} { /* 同上 */ }
         friend void swap(Shared_Memory& a, Shared_Memory& b) noexcept {
             std::swap(a.name, b.name);
             std::swap(a.area, b.area);
@@ -176,7 +182,7 @@ class Shared_Memory {
             std::swap(self, other);
             return self;
         }
-        ~Shared_Memory() {
+        ~Shared_Memory() noexcept {
             if (this->area.data() == nullptr)
                 return;
 
@@ -187,32 +193,34 @@ class Shared_Memory {
                 // 当所有 shm 都被 ‘munmap’ed 后, 共享内存将被 deallocate.
 
             munmap(
-                const_cast<void *>(this->area.data()),
+                const_cast<std::uint8_t *>(this->area.data()),
                 std::size(this->area)
             );
         }
 
-        auto get_name() const -> std::string_view { return this->name; }
-
-        template <bool other_creat>
-        auto operator==(this const auto& self, const Shared_Memory<other_creat>& other) {
-            // 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
-            if (self.name == other.name) {
-                assert(
-                    std::hash<decltype(self)>{}(self) == std::hash<decltype(other)>{}(other)
-                );
-                return true;
-            } else
-                return false;
+        auto get_name() const { return this->name; }
+        auto get_area(this auto& self) -> const auto& {
+            if constexpr (!creat)
+                return self.area;
+            else
+                if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
+                    return reinterpret_cast<const std::span<const std::uint8_t>&>(self.area);
+                else
+                    return self.area;
         }
 
-        auto& operator[](this auto& self, const std::size_t i) {
-            assert(i < std::size(self.area));
-            return *(self.begin() + i);
+        template <bool other_creat>
+        auto operator==(
+            this const auto& self, const Shared_Memory<other_creat>& other
+        ) {
+            // 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
+            return self.get_name() == other.get_name();
         }
 
         /* 🖨️ 打印 shm 区域的内存布局.  */
-        auto pretty_memory_view(const std::size_t num_col = 16, const std::string_view space = " ") const {
+        auto pretty_memory_view(
+            const std::size_t num_col = 16, const std::string_view space = " "
+        ) const {
             return std::ranges::fold_left(
                 this->area
                 | std::views::chunk(num_col)
@@ -226,44 +234,42 @@ class Shared_Memory {
             );
         }
 
-        friend decltype(auto) operator<<(std::ostream& out, const Shared_Memory& shm) {
+        friend auto operator<<(std::ostream& out, const Shared_Memory& shm)
+        -> decltype(auto) {
             return out << std::format("{}", shm);
         }
 
-        auto begin(this auto& self) {
-            if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
-                return this->area.cbegin();
-            else
-                return this->area.begin();
+        /* extra for ranges */
+        auto& operator[](this auto& self, const std::size_t i) {
+            assert(i < std::size(self));
+            return *(self.begin() + i);
         }
-        auto end(this auto& self) { return this->begin() + std::size(this->area); }
+        auto operator[](this auto& self, const std::size_t start, decltype(start) end) {
+            assert(start <= end && end <= std::size(self));
+            return std::span{
+                self.begin() + start,
+                self.begin() + end
+            };
+        }
+        auto data(this auto& self) {
+            auto& front = *self.begin();
+            if constexpr (requires {front = 0;})
+                return static_cast<void *>(&front);
+            else
+                return static_cast<const void *>(&front);
+        }
+        auto begin(this auto& self) { return self.get_area().begin(); }
+        auto end(this auto& self) { return self.begin() + std::size(self); }
         auto cbegin() const { return this->begin(); }
         auto cend() const { return this->end(); }
-
         auto size() const { return std::size(this->area); }
 };
-static_assert( std::movable<Shared_Memory<true>> );
-static_assert( std::movable<Shared_Memory<false>> );
-static_assert( std::swappable<Shared_Memory<true>> );
-static_assert( std::swappable<Shared_Memory<false>> );
-static_assert( !std::copy_constructible<Shared_Memory<true>> );
-static_assert( std::copy_constructible<Shared_Memory<false>> );
 Shared_Memory(
     std::convertible_to<std::string> auto, std::integral auto
 ) -> Shared_Memory<true>;
 Shared_Memory(
     std::convertible_to<std::string> auto
 ) -> Shared_Memory<false>;
-
-template <auto creat>
-struct std::hash<Shared_Memory<creat>> {
-    /* 只校验字节数组.  要判断是否相等, 使用更严格的 ‘operator==’.  */
-    auto operator()(const auto& shm) const noexcept {
-        return std::hash<
-            decltype(shm.pretty_memory_view())
-        >{}(shm.pretty_memory_view());
-    }
-};
 
 template <auto creat>
 struct std::formatter<Shared_Memory<creat>> {
@@ -282,18 +288,28 @@ struct std::formatter<Shared_Memory<creat>> {
             else
                 return "Shared_Memory<false>";
         }();
-        return std::format_to(
+
+        const auto addr = (const void *)(shm.get_area().data());
+        const auto length = std::size(shm.get_area());
+        const auto name = shm.get_name();
+        return std::vformat_to(
             context.out(),
-            R"({{
-    "&area": {},
-    "size": {},
+            R":({{
+    "area": {{ "&addr": {}, "|length|": {} }},
     "name": "{}",
-    "constructor": "{}"
-}})",
-            shm.area, std::size(shm), shm.name, obj_constructor
+    "constructor()": "{}"
+}}):",
+            std::make_format_args(
+                addr,
+                length,
+                name,
+                obj_constructor
+            )
         );
     }
 };
+
+static_assert( !std::copy_constructible<Shared_Memory<true>> );
 
 
 namespace {
@@ -304,7 +320,7 @@ namespace {
      * 所以生成的名字必须足够长, 📉降低碰撞率.
      */
     auto generate_shm_UUName() noexcept {
-        constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator"sv;
+        constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator";
         constexpr auto available_chars = "0123456789"
                                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                                          "abcdefghijklmnopqrstuvwxyz"sv;
@@ -340,7 +356,7 @@ namespace {
         + std::vformat(  \
             (color == "green"sv ? "\033[32m" : "\033[31m")  \
             + "\tsize={}, &area={}, alignment={}\033[0m\n"s,  \
-            std::make_format_args(size, area, alignment)  \
+            std::make_format_args(size, (const void *const&)area, alignment)  \
         )  \
 )
 
@@ -349,10 +365,54 @@ namespace {
  * 按需创建并拥有若干 ‘Shared_Memory<true>’,
  * 以向⬇️游提供 shm 页面作为 memory resource.
  */
-template <template <typename K, typename V> class map_t = std::map>
+template <template <typename... T> class set_t = std::set>
 class ShM_Resource: public std::pmr::memory_resource {
-        map_t<const void *, std::unique_ptr<Shared_Memory<true>>> resources;
-        // 恒有 ```resources.at(given_ptr)->area == given_ptr```.  TODO
+    public:
+        static constexpr bool using_ordered_set = [] consteval {
+            if (requires {
+                requires std::same_as<set_t<int>, std::set<int>>;
+            })
+                return true;
+            else if (std::is_same_v<set_t<int>, std::unordered_set<int>>)
+                return false;
+            else
+                std::unreachable();
+        }();
+    private:
+        struct ShM_As_Addr {
+            using is_transparent = int;
+
+            auto get_addr(const auto& area_or_ptr) const noexcept
+            -> const void * {
+                if constexpr (std::is_same_v<
+                    std::decay_t<decltype(area_or_ptr)>,
+                    const void *
+                >)
+                    return area_or_ptr;
+                else
+                    return area_or_ptr.get_area().data();
+            }
+
+            /* As A Comparer */
+            bool operator()(const auto& a, const auto& b) const noexcept {
+                const auto pa = this->get_addr(a), pb = this->get_addr(b);
+
+                if constexpr (using_ordered_set)
+                    return pa < pb;
+                else
+                    return pa == pb;
+            }
+            /* As A Hasher */
+            auto operator()(const auto& shm) const noexcept {
+                const auto addr = get_addr(shm);
+                return std::hash<std::decay_t<decltype(addr)>>{}(addr);
+            }
+        };
+        std::conditional_t<
+            using_ordered_set,
+            set_t<Shared_Memory<true>, ShM_As_Addr>,
+            set_t<Shared_Memory<true>, ShM_As_Addr, ShM_As_Addr>
+        > resources;
 
     protected:
         void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
@@ -374,23 +434,33 @@ class ShM_Resource: public std::pmr::memory_resource {
                 throw TooLargeAlignment{alignment};
             }
 
-            const auto shm = new Shared_Memory{generate_shm_UUName(), size};
-            this->resources.emplace(shm->area, shm);
-            if constexpr (requires {this->last_inserted = shm;})
-                this->last_inserted = shm;
+            const auto [inserted, ok] = this->resources.emplace(
+                generate_shm_UUName(),
+                size
+            );
+            assert(ok);
+            if constexpr (!using_ordered_set)
+                this->last_inserted = &*inserted;
 
-            const auto area = shm->area;
+            const auto area = const_cast<Shared_Memory<true>&>(*inserted).get_area().data();
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
         void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
+
             const auto whatcanisay_shm_out = std::move(
-                this->resources.extract(area).mapped()
+                this->resources
+#ifdef __cpp_lib_associative_heterogeneous_erasure
+                .template extract<const void *>((const void *)area)
+#else
+                .extract(this->resources.find(  (const void *)area))
+#endif
+                .value()
             );
             assert(
-                size <= std::size(*whatcanisay_shm_out)
-                && std::size(*whatcanisay_shm_out) <= ceil_to_page_size(size)
+                size <= std::size(whatcanisay_shm_out.get_area())
+                && std::size(whatcanisay_shm_out.get_area()) <= ceil_to_page_size(size)
             );
         }
         bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
@@ -403,12 +473,12 @@ class ShM_Resource: public std::pmr::memory_resource {
     public:
         ~ShM_Resource() {
             if (DEBUG) {
-                /* 显式删除以打印日志.  */
+                // 显式删除以打印日志.
                 while (!this->resources.empty()) {
-                    auto it = this->resources.begin();
+                    const auto& area = this->resources.cbegin()->get_area();
                     this->deallocate(
-                        const_cast<void *>(it->first),
-                        std::size(*it->second)
+                        const_cast<std::uint8_t *>(area.data()),
+                        std::size(area)
                     );
                 }
             }
@@ -426,50 +496,41 @@ class ShM_Resource: public std::pmr::memory_resource {
                 return std::move(self.resources);
         }
 
-        friend auto operator<<(std::ostream& out, const ShM_Resource& resrc) -> decltype(auto) {
+        friend auto operator<<(std::ostream& out, const ShM_Resource& resrc)
+        -> decltype(auto) {
             return out << std::format("{}", resrc);
         }
 
         /*
-         * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中, 返回它的无所有权指针.
-         * 允许上层用 ‘const_cast’ 通过指针对 shm 进行修改, 在此不是未定义行为.
-         * 不允许调用它的 destructor!
+         * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中.
          */
-        auto find_arena(const void *const obj) const -> const auto * requires(
-            std::is_same_v<
-                decltype(this->resources),
-                std::map<
-                    typename decltype(this->resources)::key_type,
-                    typename decltype(this->resources)::mapped_type
-                >
-            >
-        ) {
-            const auto& [arena, shm] = *(
+        auto find_arena(const void *const obj) const -> const auto& requires(using_ordered_set) {
+            const auto& shm = *(
                 --this->resources.upper_bound(obj)
             );
-            assert(arena <= obj);
+            assert(shm.get_area().data() <= obj);
 
-            return shm.get();
+            return shm;
         }
         /*
-         * 记录最近一次创建的 ‘Shared_Memory’.  允许上层用
-         * ‘const_cast’ 通过指针对 shm 进行修改, 在此不是
-         * 未定义行为.  不允许调用它的 destructor!
+         * 记录最近一次创建的 ‘Shared_Memory’.
          */
         std::conditional_t<
-            std::is_same_v<
-                decltype(resources),
-                std::unordered_map<
-                    typename decltype(resources)::key_type,
-                    typename decltype(resources)::mapped_type
-                >
-            >,
+            !using_ordered_set,
             const Shared_Memory<true> *, std::monostate
-        > last_inserted [[indeterminate,no_unique_address]];
+        > last_inserted [[
+#if __has_cpp_attribute(indeterminate)
+            indeterminate,
+#endif
+            no_unique_address
+        ]];
 };
 
-template <template <typename K, typename V> class map_t>
-struct std::formatter<ShM_Resource<map_t>> {
+static_assert( std::movable<ShM_Resource<std::set>> );
+static_assert( std::movable<ShM_Resource<std::unordered_set>> );
+
+template <template <typename... T> class set_t>
+struct std::formatter<ShM_Resource<set_t>> {
     constexpr auto parse(const auto& parser) {
         auto p = parser.begin();
 
@@ -479,30 +540,30 @@ struct std::formatter<ShM_Resource<map_t>> {
         return p;
     }
     auto format(const auto& resrc, auto& context) const {
-        if constexpr (requires {resrc.find_arena(nullptr);})
-            return std::format_to(
+        const auto size = std::size(resrc.get_resources());
+
+        if constexpr (ShM_Resource<set_t>::using_ordered_set)
+            return std::vformat_to(
                 context.out(),
-                R"({{ "resources": {{ "size": {} }}, "constructor": "ShM_Resource<std::map>" }})",
-                resrc.get_resources().size()
-            );
-        else if constexpr (sizeof resrc.last_inserted)
-            return std::format_to(
-                context.out(),
-                R"({{
-    "resources": {{ "size": {} }},
-    "last_inserted":
-{},
-    "constructor": "ShM_Resource<std::unordered_map>"
-}})",
-                resrc.get_resources().size(), *resrc.last_inserted
+                R":({{ "resources": {{ "|size|": {} }}, "constructor()": "ShM_Resource<std::set>" }}):",
+                std::make_format_args(size)
             );
         else
-            std::unreachable();
+            return std::vformat_to(
+                context.out(),
+                R":({{
+    "resources": {{ "|size|": {} }},
+    "last_inserted":
+{},
+    "constructor()": "ShM_Resource<std::unordered_set>"
+}}):",
+                std::make_format_args(
+                    size,
+                    *resrc.last_inserted
+                )
+            );
     }
 };
-
-static_assert( std::movable<ShM_Resource<std::map>> );
-static_assert( std::movable<ShM_Resource<std::unordered_map>> );
 
 
 /*
@@ -518,11 +579,11 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
         : monotonic_buffer_resource{
             ceil_to_page_size(initial_size),
-            new ShM_Resource<std::unordered_map>,
+            new ShM_Resource<std::unordered_set>,
         } {}
         ~Monotonic_ShM_Buffer() {
             this->release();
-            delete static_cast<ShM_Resource<std::unordered_map> *>(
+            delete static_cast<ShM_Resource<std::unordered_set> *>(
                 this->upstream_resource()
             );
         }
@@ -586,11 +647,11 @@ class ShM_Pool: public std::conditional_t<
                     options.largest_required_pool_block
                 ),  // 向⬆️游申请内存的🚪≥页表大小, 避免零碎的请求.
             },
-            new ShM_Resource<std::map>,
+            new ShM_Resource<std::set>,
         } {}
         ~ShM_Pool() {
             this->release();
-            delete static_cast<ShM_Resource<std::map> *>(
+            delete static_cast<ShM_Resource<std::set> *>(
                 this->upstream_resource()
             );
         }

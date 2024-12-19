@@ -6,7 +6,7 @@ CXXFLAGS = -std=c++26  \
                   -gstatement-frontiers -fno-eliminate-unused-debug-types  \
                   -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
                   -fno-eliminate-unused-debug-symbols  \
-           -Wpedantic -Wall -W  \
+           -Wpedantic -Wall -W -fconcepts-diagnostics-depth=9 -fdiagnostics-all-candidates  \
            -Iinclude
 LDFLAGS = -lrt
 
@@ -32,12 +32,12 @@ bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 		| sed -e 's/warning/🤣👉/g' -e 's/error/🤡/g';  \
 		(exit $$LASTEXITCODE);  \
 	fi
-	@echo '********** 编译完成 **********'
+	@echo '************************** 编译完成 **************************'
 
 bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
 	time $(CXX) -std=c++26 -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
-	@echo '********** 编译完成 **********'
+	@echo '************************** 编译完成 **************************'
 
 .PHONY: git
 git:
