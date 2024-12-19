@@ -1,32 +1,37 @@
 #pragma once
 // #define NDEBUG
-#include <algorithm>
-#include <atomic>
-#include <cassert>
-#include <concepts>
-#include <cstddef>
-#include <format>
-#include <functional>
+#include <algorithm>  // ranges::fold_left
+#include <atomic>  // atomic_uint
+#include <cassert>  // assert
+#include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
+#include <cstddef>  // size_t
+#include <cstdint>  // uint8_t
+#include <format>  // formatter, format_error, vformat{_to,}, make_format_args
+#include <functional>  // bind_back, bit_or, plus
 #include <iostream>  // clog
-#include <memory>
-#include <memory_resource>
+#include <iterator>  // size
+#include <memory_resource>  // pmr::{memory_resource,monotonic_buffer_resource,{,un}synchronized_pool_resource,pool_options}
 #include <new>  // bad_alloc
-#include <ostream>
-#include <random>
-#include <ranges>
-#include <set>
-#include <source_location>
-#include <string>
-#include <string_view>
-#include <type_traits>
-#include <unordered_set>
-#include <utility>
+#include <ostream>  // ostream
+#include <random>  // mt19937, random_device, uniform_int_distribution
+#include <ranges>  // views::{chunk,transform,join_with,iota}
+#include <set>  // set
+#include <source_location>  // source_location::current
+#include <span>  // span
+#include <string>  // string, operator""s
+#include <string_view>  // string_view, operator""sv
+#include <tuple>  // ignore
+#include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
+#include <unordered_set>  // unordered_set
+#include <utility>  // as_const, move, swap, unreachable, hash
 #include <variant>  // monostate
-#include <version>
-#include <unistd.h>  // close, ftruncate, getpagesize
-#include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED}
-#include <sys/stat.h>  // fstat, struct stat
+#include <version>  // __cpp_lib_associative_heterogeneous_erasure
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
+#include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
+#include <sys/stat.h>  // fstat, struct stat
+#include <unistd.h>  // close, ftruncate, getpagesize
+
+
 using std::operator""s, std::operator""sv;
 
 
