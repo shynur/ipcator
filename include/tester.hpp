@@ -12,6 +12,7 @@ struct Tester {
     /* RAII 绑定共享内存 */
     void shared_memory() {
         // 创建共享内存:
+        std::clog << 8848_shm << '\n' << "/ervervver"_shm[2344] << '\n' << +"/ervervver"_shm << '\n';
         Shared_Memory writer{
             generate_shm_UUName(),  // 生成全局唯一名字
             42,  // 要创建的共享内存的大小

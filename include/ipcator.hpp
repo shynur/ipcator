@@ -46,8 +46,9 @@ namespace {
 
 
 namespace {
-    /*
-     * 共享内存大小不必成为📄页表大小的整数倍, 但可以提高内存♻️利用率.
+    /**
+     * 将数字向上取整, 成为📄页表大小的整数倍.
+     * 像这样设置共享内存的大小, 可以提高内存♻️利用率.
      */
     inline auto ceil_to_page_size(const std::size_t min_length)
     -> std::size_t {
@@ -59,7 +60,7 @@ namespace {
 
 
 namespace {
-    /*
+    /**
      * 给定 shared memory object 的名字, 创建/打开
      * 📂 shm obj, 并将其映射到进程自身的地址空间中.
      * - 对于 writer, 使用 `map_shm<true>(name,size)->void*`,
@@ -122,7 +123,7 @@ namespace {
 }
 
 
-/*
+/**
  * 不可变的最小单元, 表示1️⃣块共享内存区域.
  */
 template <bool creat>
@@ -135,6 +136,10 @@ class Shared_Memory {
             >
         > area;
     public:
+        /**
+         * 创建名字为 ‘name’ (用 ‘generate_shm_UUName’ 自动生成最方便), 大小为 ‘size’
+         * (建议用 ‘ceil_to_page_size’ 向上取整) 的共享内存对象, 并映射到进程的地址空间中.
+         */
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
             static_cast<std::uint8_t *>(map_shm<creat>(name, size)),
@@ -145,10 +150,10 @@ class Shared_Memory {
                 for (auto& byte : this->area)
                     byte ^= byte;
         }
-        /*
-         * 根据名字打开对应的 shm obj.  不允许 reader 指定 ‘size’,
-         * 因为这是🈚意义的.  Reader 打开的是已经存在于内存中的 shm
-         * obj, 占用大小已经确定, 更小的 ‘size’ 并不能节约系统资源.
+        /**
+         * 根据名字打开对应的 shm obj, 并映射到进程的地址空间中.  不允许 reader
+         * 指定 ‘size’, 因为这是🈚意义的.  Reader 打开的是已经存在于内存中的
+         * shm obj, 占用大小已经确定, 更小的 ‘size’ 并不能节约系统资源.
          */
         Shared_Memory(const std::string name) requires(!creat)
         : name{name}, area{
@@ -169,24 +174,36 @@ class Shared_Memory {
         : name{std::move(other.name)}, area{std::move(other.area)} {
             other.area = {};
         }
+        /**
+         * 在进程地址空间的另一处映射一个相同的 shm obj.
+         */
         Shared_Memory(const Shared_Memory& other) requires(!creat)
         : Shared_Memory{other.name} {
-            // Reader 手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
+            // 单个进程手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
             // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
             // 的地址 (‘area’) 相同.  对于
             //   ```Shared_Memory a, b;```
             // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
         }
+        /**
+         * 在进程地址空间的另一处映射一个相同的 shm obj, 只读模式.
+         */
         Shared_Memory(const Shared_Memory<!creat>& other) requires(!creat)
         : Shared_Memory{other.get_name()} { /* 同上 */ }
         friend void swap(Shared_Memory& a, Shared_Memory& b) noexcept {
             std::swap(a.name, b.name);
             std::swap(a.area, b.area);
         }
+        /**
+         * 映射等号与右侧同名的 shm obj, 左侧原有的 shm obj 被回收.
+         */
         auto& operator=(this auto& self, Shared_Memory other) {
             std::swap(self, other);
             return self;
         }
+        /**
+         * 取消映射, 并在 shm obj 的被映射数目为 0 的时候自动销毁它.
+         */
         ~Shared_Memory() noexcept {
             if (this->area.data() == nullptr)
                 return;
@@ -214,15 +231,20 @@ class Shared_Memory {
                     return self.area;
         }
 
+        /**
+         * 只要内存区域是由同一个 shm obj 映射而来 (即, 同名), 就视为相等.
+         */
         template <bool other_creat>
         auto operator==(
             this const auto& self, const Shared_Memory<other_creat>& other
         ) {
-            // 只要内存区域是由同一个 shm obj 映射而来, 就视为相等.
             return self.get_name() == other.get_name();
         }
 
-        /* 🖨️ 打印 shm 区域的内存布局.  */
+        /**
+         * 🖨️ 打印 shm 区域的内存布局到一个字符串.  每行有 ‘num_col’
+         * 个字节, 每个字节的 16 进制表示之间, 用 ‘space’ 填充.
+         */
         auto pretty_memory_view(
             const std::size_t num_col = 16, const std::string_view space = " "
         ) const {
@@ -239,12 +261,15 @@ class Shared_Memory {
             );
         }
 
+        /**
+         * 将该实例自身的属性以类似 JSON 的格式输出.
+         */
         friend auto operator<<(std::ostream& out, const Shared_Memory& shm)
         -> decltype(auto) {
             return out << std::format("{}", shm);
         }
 
-        /* extra for ranges */
+        /* impl for ranges */
         auto& operator[](this auto& self, const std::size_t i) {
             assert(i < std::size(self));
             return *(self.begin() + i);
@@ -256,6 +281,9 @@ class Shared_Memory {
                 self.begin() + end
             };
         }
+        /**
+         * 被映射的起始地址.
+         */
         auto data(this auto& self) {
             auto& front = *self.begin();
             if constexpr (requires {front = 0;})
@@ -267,6 +295,9 @@ class Shared_Memory {
         auto end(this auto& self) { return self.begin() + std::size(self); }
         auto cbegin() const { return this->begin(); }
         auto cend() const { return this->end(); }
+        /**
+         * 映射的区域大小.
+         */
         auto size() const { return std::size(this->area); }
 };
 Shared_Memory(
@@ -276,8 +307,12 @@ Shared_Memory(
     std::convertible_to<std::string> auto
 ) -> Shared_Memory<false>;
 
+static_assert( !std::copy_constructible<Shared_Memory<true>> );
+
 template <auto creat>
 struct std::formatter<Shared_Memory<creat>> {
+    std::size_t indent_level = 1;
+    std::string space = "    ";
     constexpr auto parse(const auto& parser) {
         auto p = parser.begin();
 
@@ -300,13 +335,12 @@ struct std::formatter<Shared_Memory<creat>> {
         return std::vformat_to(
             context.out(),
             R":({{
-    "area": {{ "&addr": {}, "|length|": {} }},
-    "name": "{}",
-    "constructor()": "{}"
+<tab>"area": {{ "&addr": {}, "|length|": {} }},
+<tab>"name": "{}",
+<tab>"constructor()": "{}"
 }}):",
             std::make_format_args(
-                addr,
-                length,
+                addr, length,
                 name,
                 obj_constructor
             )
@@ -314,11 +348,25 @@ struct std::formatter<Shared_Memory<creat>> {
     }
 };
 
-static_assert( !std::copy_constructible<Shared_Memory<true>> );
+auto operator""_shm(const unsigned long long size);
+auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
+    struct ShM_Constructor_Proxy {
+        const char *name;
+        auto operator[](const std::size_t size) {
+            if (name == nullptr)
+                throw "不允许借助同一个字面量创建多次";  // TODO: 继承一个真正的异常类型.
+            auto shm = Shared_Memory{name, size};
+            name = nullptr;
+            return shm;
+        }
+        auto operator+() const { return Shared_Memory{name}; }
+    };
+    return ShM_Constructor_Proxy{name};
+}
 
 
 namespace {
-    /*
+    /**
      * 创建一个全局唯一的名字提供给 shm obj.
      * 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
      * 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
@@ -352,6 +400,9 @@ namespace {
         assert(("/dev/shm/" + base_name + '.' + suffix).length() == 255);
         return '/' + base_name + '.' + suffix;
     }
+}
+auto operator""_shm(const unsigned long long size) {
+    return Shared_Memory{generate_shm_UUName(), size};
 }
 
 
