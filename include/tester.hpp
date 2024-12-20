@@ -12,12 +12,12 @@ struct Tester {
     /* RAII 绑定共享内存 */
     void shared_memory() {
         // 创建共享内存:
-        std::clog << 8848_shm << '\n' << "/ervervver"_shm[2344] << '\n' << +"/ervervver"_shm << '\n';
+        std::cout << 8848_shm << '\n' << "/ervervver"_shm[2344] << '\n' << +"/ervervver"_shm << '\n';
         Shared_Memory writer{
             generate_shm_UUName(),  // 生成全局唯一名字
             42,  // 要创建的共享内存的大小
         };
-        std::println("创建了 writer: {}\n", writer);
+        std::cout << "创建了 writer: " << writer << '\n';
 
         // 写入内容.
         for (auto i : std::views::iota(0) | std::views::take(std::size(writer)))
@@ -25,16 +25,16 @@ struct Tester {
         // 但先不读取.
 
         Shared_Memory<false> reader = writer;
-        std::println("创建了 reader: {}\n", reader);
+        std::cout << "创建了 reader: " << reader << '\n';
         // reader[0] = 1;  ==>  Error!  不允许赋值.
         // 读取 writer 写入的值:
-        std::println("reader 读到了:\n{}\n", reader.pretty_memory_view(8, "  "));
+        std::cout << "reader 读到了:\n" << reader.pretty_memory_view(8, "  ") << '\n';
 
         auto another_reader = reader;
-        std::println(
-            "另一个 reader: {}\n试一下读取:\n{}\n",
-            another_reader, another_reader.pretty_memory_view()
-        );
+        std::cout << "另一个 reader: " << another_reader
+                  << "\n试一下读取:\n" << another_reader.pretty_memory_view()
+                  << '\n';
+
         assert(reader == another_reader);
     }
 
@@ -49,11 +49,13 @@ struct Tester {
             auto obj = (char *)addr1 + 50;
             // 查询该对象在所在的共享内存:
             auto& shm = resrc_set.find_arena(obj);
-            std::println("\n对象 {} 位于 {}\n", (void *)obj, shm);
+            std::cout << "\n对象 " << (void *)obj
+                      << " 位于 " << shm
+                      << '\n';
 
             // 打印底层注册表:
             for (auto& shm : resrc_set.get_resources())
-                std::println("resrc_map 中的: {}\n", shm);
+                std::cout << "resrc_map 中的: " << shm << '\n';
 
             // resrc_map.get_resources().clear();  ==>  Error!  默认不可变,
             // 除非是 纯右值 或者 将亡值:
@@ -66,12 +68,11 @@ struct Tester {
         {
             ShM_Resource<std::unordered_set> resrc_uoset;
             std::ignore = resrc_uoset.allocate(100);
+            std::ignore = resrc_uoset.allocate(200);
 
             // 查看内部信息, 例如最近一次注册的是哪块共享内存:
-            std::println(
-                "`last_inserted` 字段表示上次插入的共享内存:\n{}\n",
-                resrc_uoset
-            );
+            std::cout << "`last_inserted` 字段表示上次插入的共享内存:\n"
+                      << resrc_uoset << '\n';
 
             // `resrc_hash` 底层使用哈希表, 所以没有 `find_arena` 方法.
             // resrc_hash.find_arena(nullptr);  ==>  Error!
@@ -86,7 +87,7 @@ struct Tester {
     void sync_pool() {}
     void unsync_pool() {}
     void print_sys_info() {
-        std::println(stderr, "Page Size = {}", getpagesize());
+        std::cout << "Page Size = " << getpagesize() << '\n';
         // TODO: 打印对齐/缓存行信息.
     }
 };

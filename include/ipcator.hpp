@@ -23,7 +23,7 @@
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>  // unordered_set
-#include <utility>  // as_const, move, swap, unreachable, hash
+#include <utility>  // as_const, move, swap, unreachable, hash, exchange
 #include <variant>  // monostate
 #include <version>  // __cpp_lib_associative_heterogeneous_erasure
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
@@ -142,13 +142,16 @@ class Shared_Memory {
          */
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
-            static_cast<std::uint8_t *>(map_shm<creat>(name, size)),
+            (std::uint8_t *)map_shm<creat>(name, size),
             size
         } {
-            if (DEBUG)
+            if (DEBUG) {
                 // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
                 for (auto& byte : this->area)
                     byte ^= byte;
+
+                std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
+            }
         }
         /**
          * 根据名字打开对应的 shm obj, 并映射到进程的地址空间中.  不允许 reader
@@ -160,20 +163,21 @@ class Shared_Memory {
             [&] -> decltype(this->area) {
                 const auto [addr, length] = map_shm<>(name);
                 return {
-                    static_cast<const std::uint8_t *>(addr),
+                    (const std::uint8_t *)addr,
                     length
                 };
             }()
         } {
-            if (DEBUG)
+            if (DEBUG) {
                 // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
                 for (auto byte : std::as_const(this->area))
                     std::ignore = auto{byte};
+
+                std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
+            }
         }
         Shared_Memory(Shared_Memory&& other) noexcept
-        : name{std::move(other.name)}, area{std::move(other.area)} {
-            other.area = {};
-        }
+        : name{std::move(other.name)}, area{std::exchange(other.area, {})} {}
         /**
          * 在进程地址空间的另一处映射一个相同的 shm obj.
          */
@@ -204,7 +208,7 @@ class Shared_Memory {
         /**
          * 取消映射, 并在 shm obj 的被映射数目为 0 的时候自动销毁它.
          */
-        ~Shared_Memory() noexcept {
+        ~Shared_Memory() noexcept  {
             if (this->area.data() == nullptr)
                 return;
 
@@ -218,6 +222,9 @@ class Shared_Memory {
                 const_cast<std::uint8_t *>(this->area.data()),
                 std::size(this->area)
             );
+
+            if (DEBUG)
+                std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m\n", *this) + '\n';
         }
 
         auto get_name() const { return this->name; }
@@ -232,7 +239,7 @@ class Shared_Memory {
         }
 
         /**
-         * 只要内存区域是由同一个 shm obj 映射而来 (即, 同名), 就视为相等.
+         * 只要内存区域是由同一个 shm obj 映射而来 (即 同名), 就视为相等.
          */
         template <bool other_creat>
         auto operator==(
@@ -248,6 +255,7 @@ class Shared_Memory {
         auto pretty_memory_view(
             const std::size_t num_col = 16, const std::string_view space = " "
         ) const {
+#if defined __cpp_lib_ranges_fold && defined __cpp_lib_ranges_chunk && defined __cpp_lib_ranges_join_with
             return std::ranges::fold_left(
                 this->area
                 | std::views::chunk(num_col)
@@ -259,6 +267,26 @@ class Shared_Memory {
                 | std::views::join_with('\n'),
                 ""s, std::plus<>{}
             );
+#else
+            std::vector<std::vector<std::string>> lines;
+            std::vector<std::string> line;
+            for (const auto& B : this->area) {
+                line.push_back(std::format("{:02X}", B));
+                line.push_back(std::string{space});
+                if (line.size() / 2 == num_col) {
+                    line.back() = '\n';
+                    lines.push_back(std::exchange(line, {}));
+                }
+            }
+            lines.push_back(line);
+            std::string view;
+            for (const auto& line : lines) {
+                for (const auto& e : line)
+                    view += e;
+            }
+            view.pop_back();
+            return view;
+#endif
         }
 
         /**
@@ -269,27 +297,29 @@ class Shared_Memory {
             return out << std::format("{}", shm);
         }
 
-        /* impl for ranges */
+        /* impl std::ranges::range for Self */
         auto& operator[](this auto& self, const std::size_t i) {
             assert(i < std::size(self));
             return *(self.begin() + i);
         }
+#ifdef __cpp_multidimensional_subscript
         auto operator[](this auto& self, const std::size_t start, decltype(start) end) {
             assert(start <= end && end <= std::size(self));
             return std::span{
                 self.begin() + start,
-                self.begin() + end
+                self.begin() + end,
             };
         }
+#endif
         /**
          * 被映射的起始地址.
          */
         auto data(this auto& self) {
             auto& front = *self.begin();
             if constexpr (requires {front = 0;})
-                return static_cast<void *>(&front);
+                return (void *)&front;
             else
-                return static_cast<const void *>(&front);
+                return (const void *)&front;
         }
         auto begin(this auto& self) { return self.get_area().begin(); }
         auto end(this auto& self) { return self.begin() + std::size(self); }
@@ -311,15 +341,11 @@ static_assert( !std::copy_constructible<Shared_Memory<true>> );
 
 template <auto creat>
 struct std::formatter<Shared_Memory<creat>> {
-    std::size_t indent_level = 1;
-    std::string space = "    ";
     constexpr auto parse(const auto& parser) {
-        auto p = parser.begin();
-
-        if (p != parser.end() && *p != '}')
+        if (const auto p = parser.begin(); p != parser.end() && *p != '}')
             throw std::format_error("不支持任何格式化动词.");
-
-        return p;
+        else
+            return p;
     }
     auto format(const auto& shm, auto& context) const {
         constexpr auto obj_constructor = [] consteval {
@@ -331,13 +357,13 @@ struct std::formatter<Shared_Memory<creat>> {
 
         const auto addr = (const void *)(shm.get_area().data());
         const auto length = std::size(shm.get_area());
-        const auto name = shm.get_name();
+        const auto name = shm.get_name().substr(0, 54);
         return std::vformat_to(
             context.out(),
             R":({{
-<tab>"area": {{ "&addr": {}, "|length|": {} }},
-<tab>"name": "{}",
-<tab>"constructor()": "{}"
+    "area": {{ "&addr": {}, "|length|": {} }},
+    "name": "{}...",
+    "constructor()": "{}"
 }}):",
             std::make_format_args(
                 addr, length,
@@ -348,18 +374,23 @@ struct std::formatter<Shared_Memory<creat>> {
     }
 };
 
+/**
+ * 创建 指定大小的 名字随机生成的 shm obj, 以读写模式映射.
+ */
 auto operator""_shm(const unsigned long long size);
+/**
+ * - ‘"/name"_shm[size]’ 创建 指定大小的命名 shm obj, 以读写模式映射.
+ * - ‘+"/name"_shm’ 将命名的 shm obj 以只读模式映射至本地.
+ */
 auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
         const char *name;
         auto operator[](const std::size_t size) {
-            if (name == nullptr)
-                throw "不允许借助同一个字面量创建多次";  // TODO: 继承一个真正的异常类型.
-            auto shm = Shared_Memory{name, size};
-            name = nullptr;
-            return shm;
+            return Shared_Memory{name, size};
         }
-        auto operator+() const { return Shared_Memory{name}; }
+        auto operator+() const {
+            return Shared_Memory{name};
+        }
     };
     return ShM_Constructor_Proxy{name};
 }
@@ -367,10 +398,9 @@ auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
 
 namespace {
     /**
-     * 创建一个全局唯一的名字提供给 shm obj.
-     * 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
-     * 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
-     * 所以生成的名字必须足够长, 📉降低碰撞率.
+     * 创建一个全局唯一的名字提供给 shm obj.  该名字由
+     *      固定前缀 + 计数字段 + 独属进程的后缀
+     * 组成.
      */
     auto generate_shm_UUName() noexcept {
         constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator";
@@ -385,17 +415,33 @@ namespace {
             1 + cnt.fetch_add(1, std::memory_order_relaxed)
         );
 
-        static const auto suffix = std::ranges::fold_left(
-            std::views::iota(("/dev/shm/" + base_name + '.').length(), 255u)
-            | std::views::transform([
-                available_chars,
-                gen = std::mt19937{std::random_device{}()},
-                distri = std::uniform_int_distribution<>{0, available_chars.length()-1}
-            ](auto......) mutable {
-                return available_chars[distri(gen)];
-            }),
-            ""s, std::plus<>{}
-        );
+        // 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
+        // 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
+        // 所以生成的名字必须足够长, 📉降低碰撞率.
+        static const auto suffix =
+#ifdef __cpp_lib_ranges_fold
+            std::ranges::fold_left(
+                std::views::iota(("/dev/shm/" + base_name + '.').length(), 255u)
+                | std::views::transform([
+                    available_chars,
+                    gen = std::mt19937{std::random_device{}()},
+                    distri = std::uniform_int_distribution<>{0, available_chars.length()-1}
+                ](auto......) mutable {
+                    return available_chars[distri(gen)];
+                }),
+                ""s, std::plus<>{}
+            )
+#else
+            [&] {
+                auto gen = std::mt19937{std::random_device{}()};
+                auto distri = std::uniform_int_distribution<>{0, available_chars.length()-1};
+                std::string suffix;
+                for (auto current_len = ("/dev/shm/" + base_name + '.').length(); current_len++ != 255u; )
+                    suffix += available_chars[distri(gen)];
+                return suffix;
+            }()
+#endif
+        ;
 
         assert(("/dev/shm/" + base_name + '.' + suffix).length() == 255);
         return '/' + base_name + '.' + suffix;
@@ -413,11 +459,11 @@ auto operator""_shm(const unsigned long long size) {
             (color == "green"sv ? "\033[32m" : "\033[31m")  \
             + "\tsize={}, &area={}, alignment={}\033[0m\n"s,  \
             std::make_format_args(size, (const void *const&)area, alignment)  \
-        )  \
+        ) + '\n'  \
 )
 
 
-/*
+/**
  * 按需创建并拥有若干 ‘Shared_Memory<true>’,
  * 以向⬇️游提供 shm 页面作为 memory resource.
  */
@@ -432,7 +478,11 @@ class ShM_Resource: public std::pmr::memory_resource {
             else if (std::is_same_v<set_t<int>, std::unordered_set<int>>)
                 return false;
             else
+#ifdef __cpp_lib_unreachable
                 std::unreachable();
+#else
+                return bool{};
+#endif
         }();
     private:
         struct ShM_As_Addr {
@@ -510,7 +560,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #ifdef __cpp_lib_associative_heterogeneous_erasure
                 .template extract<const void *>((const void *)area)
 #else
-                .extract(this->resources.find(  (const void *)area))
+                .extract(this->resources.find((const void *)area))
 #endif
                 .value()
             );
@@ -529,7 +579,7 @@ class ShM_Resource: public std::pmr::memory_resource {
     public:
         ~ShM_Resource() {
             if (DEBUG) {
-                // 显式删除以打印日志.
+                // 显式删除以触发日志输出.
                 while (!this->resources.empty()) {
                     const auto& area = this->resources.cbegin()->get_area();
                     this->deallocate(
@@ -557,7 +607,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             return out << std::format("{}", resrc);
         }
 
-        /*
+        /**
          * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中.
          */
         auto find_arena(const void *const obj) const -> const auto& requires(using_ordered_set) {
@@ -568,7 +618,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 
             return shm;
         }
-        /*
+        /**
          * 记录最近一次创建的 ‘Shared_Memory’.
          */
         std::conditional_t<
@@ -588,15 +638,29 @@ static_assert( std::movable<ShM_Resource<std::unordered_set>> );
 template <template <typename... T> class set_t>
 struct std::formatter<ShM_Resource<set_t>> {
     constexpr auto parse(const auto& parser) {
-        auto p = parser.begin();
-
-        if (p != parser.end() && *p != '}')
+        if (const auto p = parser.begin(); p != parser.end() && *p != '}')
             throw std::format_error("不支持任何格式化动词.");
-
-        return p;
+        else
+            return p;
     }
     auto format(const auto& resrc, auto& context) const {
         const auto size = std::size(resrc.get_resources());
+        const auto resources_values =
+#if defined __cpp_lib_ranges_join_with && defined __cpp_lib_ranges_to_container
+            resrc.get_resources()
+            | std::views::transform([](auto& shm) {return std::format("{}", shm);})
+            | std::views::join_with(",\n"s)
+            | std::ranges::to<std::string>()
+#else
+            [&] {
+                std::string arr;
+                for (const auto& shm : resrc.get_resources())
+                    arr += std::format("{}", shm) + ",\n";
+                arr.pop_back();
+                return arr;
+            }()
+#endif
+        ;
 
         if constexpr (ShM_Resource<set_t>::using_ordered_set)
             return std::vformat_to(
@@ -608,13 +672,21 @@ struct std::formatter<ShM_Resource<set_t>> {
             return std::vformat_to(
                 context.out(),
                 R":({{
-    "resources": {{ "|size|": {} }},
-    "last_inserted":
+        "resources":
+    {{
+        "|size|": {},
+        "values":
+    [
+{}
+    ]
+    }},
+        "last_inserted":
 {},
-    "constructor()": "ShM_Resource<std::unordered_set>"
+        "constructor()": "ShM_Resource<std::unordered_set>"
 }}):",
                 std::make_format_args(
                     size,
+                    resources_values,
                     *resrc.last_inserted
                 )
             );
@@ -622,12 +694,12 @@ struct std::formatter<ShM_Resource<set_t>> {
 };
 
 
-/*
+/**
  * 以 ‘ShM_Resource’ 为⬆️游的单调增长 buffer.  优先使用⬆️游上次
  * 下发内存时未能用到的区域响应 ‘allocate’, 而不是再次申请内存资源.
  */
 struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
-        /*
+        /**
          * 设定缓冲区的初始大小, 但实际是惰性分配的💤.
          * ‘initial_size’ 如果不是📄页表大小的整数倍,
          * 几乎_一定_会浪费空间.
@@ -662,7 +734,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
 };
 
 
-/*
+/**
  * 以 ‘ShM_Resource’ 为⬆️游的内存池.  目标是减少内存碎片, 首先尝试
  * 在相邻位置分配请求的资源, 优先使用已分配的空闲区域.  当有大片
  * 连续的内存块处于空闲状态时, 会触发🗑️GC, 将资源释放并返还给⬆️游,

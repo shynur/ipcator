@@ -20,6 +20,14 @@ run-build:  bin/release.exe
 	@time $<
 	echo $$?
 
+# Usage:  echo 20 | make try-backport
+.PHONY: try-backport
+try-backport:
+	read;  \
+	$(CXX) -std=c++$$REPLY -fpermissive -fconcepts -w -O0 -g0 -Iinclude $(LDFLAGS) -o bin/backport-$$REPLY.exe  src/main.cpp;  \
+	bin/backport-$$REPLY.exe
+	echo $$?
+
 bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
 	mkdir -p /tmp/shynur/ipcator/;  \
