@@ -1,4 +1,8 @@
 #include "ipcator.hpp"
+#include <chrono>
+#ifdef __cpp_lib_print
+#include <print>
+#endif
 
 
 struct Print_Fences {
@@ -14,9 +18,9 @@ struct Tester {
         std::setbuf(stdout, 0);
         print_sys_info();
         shared_memory();
-        //shm_resource();
+        // shm_resource();
     }
-    void create_shm_1() {
+    void shm_1() {
         Print_Fences pf = __func__;
 
         // 创建指定大小 (25 bytes) 的共享内存, 可读可写,
@@ -32,7 +36,7 @@ struct Tester {
 
         pf.hr();
     }
-    void create_shm_2() {
+    void shm_2() {
         Print_Fences pf = __func__;
 
         // 创建命名的指定大小的共享内存:
@@ -52,7 +56,7 @@ struct Tester {
 
         pf.hr();
     }
-    void create_shm_3() {
+    void shm_3() {
         Print_Fences pf = __func__;
 
         // 通过函数指定名字和大小, 然后创建:
@@ -75,7 +79,7 @@ struct Tester {
             std::cout << (int)byte << ' ';
         pf.hr();
     }
-    void create_shm_4() {
+    void shm_4() {
         Print_Fences pf = __func__;
 
         auto writer_a = "/one-more-shm"_shm[7],
@@ -87,18 +91,73 @@ struct Tester {
         writer_b[5] = 5;
 
         std::cout << "读取 writer_b 在原 writer_a 持有的内存上写入的 byte: "
+                  << (int)reader[5] << "\n";
+
+        writer_b = std::move(writer_a);
+        // writer_b 原本持有的共享内存所有权被 writer_a
+        // 移交的所有权挤占掉了, 只能被丢弃并触发 GC.
+        writer_b[5] = 1;
+        std::cout << "再读刚刚那个 byte, 发现并没有改变: "
                   << (int)reader[5];
         pf.hr();
+    }
+    void shm_5() {
+        Print_Fences pf = __func__;
+
+        auto writer = "/one-shared-memory"_shm[10];
+        std::cout << "起始地址: " << writer.data() << ' '
+                  << "或 " << (void *)&writer[0] << ", "
+                  << "长度为: " << std::size(writer) << '\n';
+
+        auto reader = +"/one-shared-memory"_shm;
+        std::cout << (writer == reader ? "writer 和 reader 指向同一个共享内存对象" : "并不") << ".\n";
+
+#ifdef __cpp_lib_print
+        std::println("writer 的 JSON 表示: {}", writer);
+#else
+        std::cout << "writer 的 JSON 表示: " << writer << '\n';
+#endif
+
+#if __cplusplus >= 202302L
+        for (auto [i, byte] : writer[2, 8] | std::views::enumerate)
+            byte = i+1;
+        std::cout << reader.pretty_memory_view();
+#endif
+
+        const auto& oops_icantwrite = writer;
+        // const 时权限和 reader 一样:
+        // oops_icantwrite[0] = 0;  // error!
+        auto& icanwrite = const_cast<Shared_Memory<true>&>(oops_icantwrite);
+        // 只要不改变所有权, 由 ipcator 保证使用 const_cast 是合法有定义的行为.
+        icanwrite[0] = 0;  // 成功修改.
+
+        pf.hr();
+    }
+    void shm_benchmark(const unsigned times) {
+        Print_Fences pf = __func__;
+
+        const auto start = std::chrono::high_resolution_clock::now();
+        for (auto _ : std::views::iota(0) | std::views::take(times)) {
+            auto&& writer = 8848_shm;
+            Shared_Memory<false> reader_a = writer;
+            // auto reader_b = reader_a;
+        }
+        const auto end = std::chrono::high_resolution_clock::now();
+
+        std::cout << "平均耗时: "
+                  << std::chrono::duration_cast<std::chrono::microseconds>(end - start) / (double)times
+                  << '\n';
     }
     /**
      * RAII 绑定共享内存的示例.
      */
     void shared_memory() {
-        // 几种创建 Shared_Memory 的示例.
-        create_shm_1();
-        create_shm_2();
-        create_shm_3();
-        create_shm_4();
+        shm_1();
+        shm_2();
+        shm_3();
+        shm_4();
+        shm_5();
+        shm_benchmark(1'0000);
     }
 
     /* 原始的共享内存分配器, 一次性分配一整块共享内存, 管理多块共享内存.  */
@@ -156,16 +215,16 @@ struct Tester {
 
 
 Print_Fences::Print_Fences(const char *f): f{f} {
-        std::cout << "\n\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> "
-                  << f
-                  << " >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n";
-    }
+    std::cout << "\n\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> "
+              << f
+              << " >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n";
+}
 Print_Fences::~Print_Fences() {
-        std::cout << "\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< "
-                  << f
-                  << " <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n\n";
-    }
+    std::cout << "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< "
+              << f
+              << " <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n\n";
+}
 void Print_Fences::hr() const {
-        std::cout << "\n~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ "
-                     "~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~\n";
-    }
+    std::cout << "\n~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ "
+                 "~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~\n";
+}

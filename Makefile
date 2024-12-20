@@ -23,8 +23,9 @@ run-build:  bin/release.exe
 # Usage:  echo 20 | make try-backport
 .PHONY: try-backport
 try-backport:
-	read;  \
-	$(CXX) -std=c++$$REPLY -fpermissive -fconcepts -w -O0 -g0 -Iinclude $(LDFLAGS) -o bin/backport-$$REPLY.exe  src/main.cpp;  \
+	read  &&  \
+	$(CXX) -std=c++$$REPLY -fpermissive -fconcepts -w -O0 -g0 -Iinclude $(LDFLAGS)  \
+	  -o bin/backport-$$REPLY.exe -D'NDEBUG'  src/main.cpp  &&  \
 	bin/backport-$$REPLY.exe
 	echo $$?
 

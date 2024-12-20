@@ -83,7 +83,13 @@ namespace {
 
             if constexpr (creat) {
                 // 设置 shm obj 的大小:
-                const auto result_resize = ftruncate(fd, size...);
+                const auto result_resize = ftruncate(
+                    fd,
+                    size...
+#ifdef __cpp_pack_indexing
+                            [0]
+#endif
+                );
                 assert(result_resize != -1);
             }
 
@@ -91,7 +97,13 @@ namespace {
                 fd,
                 [&] {
                     if constexpr (creat)
-                        return [](const auto size, ...){return size;}(size...);
+                        return
+#ifdef __cpp_pack_indexing
+                            size...[0]
+#else
+                            [](const auto size, ...) {return size;}(size...)
+#endif
+                        ;
                     else {
                         struct stat shm;
                         fstat(fd, &shm);
@@ -124,7 +136,8 @@ namespace {
 
 
 /**
- * 不可变的最小单元, 表示1️⃣块共享内存区域.
+ * 表示1️⃣块被映射的共享内存区域.
+ * 对于 writer, 它还拥有对应的共享内存对象的所有权.
  */
 template <bool creat>
 class Shared_Memory {
@@ -143,14 +156,14 @@ class Shared_Memory {
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
             (std::uint8_t *)map_shm<creat>(name, size),
-            size
+            size,
         } {
             if (DEBUG) {
                 // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
                 for (auto& byte : this->area)
                     byte ^= byte;
 
-                std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
+                std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m", *this) + '\n';
             }
         }
         /**
@@ -201,9 +214,9 @@ class Shared_Memory {
         /**
          * 映射等号与右侧同名的 shm obj, 左侧原有的 shm obj 被回收.
          */
-        auto& operator=(this auto& self, Shared_Memory other) {
-            std::swap(self, other);
-            return self;
+        auto& operator=(Shared_Memory other) {
+            swap(*this, other);
+            return *this;
         }
         /**
          * 取消映射, 并在 shm obj 的被映射数目为 0 的时候自动销毁它.
@@ -224,7 +237,7 @@ class Shared_Memory {
             );
 
             if (DEBUG)
-                std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m\n", *this) + '\n';
+                std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m", *this) + '\n';
         }
 
         auto get_name() const { return this->name; }
@@ -379,10 +392,6 @@ struct std::formatter<Shared_Memory<creat>> {
     }
 };
 
-template <auto creat>
-auto std::swap(Shared_Memory<creat>& a, decltype(a) b) {
-    return swap(a, b);
-}
 
 /**
  * 创建 指定大小的 名字随机生成的 shm obj, 以读写模式映射.
