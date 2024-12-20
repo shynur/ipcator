@@ -1,5 +1,4 @@
 #include "ipcator.hpp"
-#include <print>
 
 
 struct Tester {
@@ -9,33 +8,40 @@ struct Tester {
         shm_resource();
     }
 
-    /* RAII 绑定共享内存 */
+    /**
+     * RAII 绑定共享内存.
+     */
     void shared_memory() {
-        // 创建共享内存:
-        std::cout << 8848_shm << '\n' << "/ervervver"_shm[2344] << '\n' << +"/ervervver"_shm << '\n';
-        Shared_Memory writer{
+        auto writer_1 = 25_shm;  // 创建指定大小的共享内存, 可读可写.
+        writer_1[16] = 0x77;  // 设置第 16 个字节.
+        Shared_Memory reader_1 = writer_1.get_name();  // 只读地打开刚才的共享内存.
+        std::cout << reader_1.pretty_memory_view() << "\n";  // 查看一下内存布局.
+        hr(1);
+
+        auto writer_2 = "/will-be-removed-immediately"_shm[5];  // 创建命名的指定大小的共享内存.
+        auto reader_2 = +"/will-be-removed-immediately"_shm;  // 只读地打开它.
+        writer_2[2] = 0x42;
+        Shared_Memory{std::move(writer_2)};  // 移出去, 然后析构.
+        std::cout << reader_2.pretty_memory_view() << "\n";
+        // ^^^^^ 虽然 writer 没了, 但它的尸体还在, 除非它的 reader 也走了...
+        hr(2);
+
+        // 运行时指定名字和大小, 然后创建:
+        Shared_Memory writer_3{
             generate_shm_UUName(),  // 生成全局唯一名字
-            42,  // 要创建的共享内存的大小
+            5 + (unsigned)std::rand() % 5,  // 要创建的共享内存的大小
         };
-        std::cout << "创建了 writer: " << writer << '\n';
-
-        // 写入内容.
-        for (auto i : std::views::iota(0) | std::views::take(std::size(writer)))
-            writer[i] = i;
-        // 但先不读取.
-
-        Shared_Memory<false> reader = writer;
-        std::cout << "创建了 reader: " << reader << '\n';
-        // reader[0] = 1;  ==>  Error!  不允许赋值.
-        // 读取 writer 写入的值:
-        std::cout << "reader 读到了:\n" << reader.pretty_memory_view(8, "  ") << '\n';
-
-        auto another_reader = reader;
-        std::cout << "另一个 reader: " << another_reader
-                  << "\n试一下读取:\n" << another_reader.pretty_memory_view()
-                  << '\n';
-
-        assert(reader == another_reader);
+        Shared_Memory<false> reader_3a = writer_3;
+         // "<false>" ^^^^^ 表示不可写入, 通常不需要显式指出, 就比如上面几个例子.
+        auto reader_3b = reader_3a;
+        // reader 的任何写入操作都会在编译期被阻拦:
+        // reader_3a[3] = 0;  // error!
+        // reader_3b[3] = 0;  // error!
+        auto writer_4 = "/another-shm"_shm[11];
+        std::swap(writer_3, writer_4);  // 字面意思, 做了一次交换.
+        writer_4[3] = 3;
+        std::cout << (int)reader_3b[3] << "\n";
+        hr(3);
     }
 
     /* 原始的共享内存分配器, 一次性分配一整块共享内存, 管理多块共享内存.  */
@@ -87,7 +93,11 @@ struct Tester {
     void sync_pool() {}
     void unsync_pool() {}
     void print_sys_info() {
-        std::cout << "Page Size = " << getpagesize() << '\n';
-        // TODO: 打印对齐/缓存行信息.
+        std::cout << "页表大小 = " << getpagesize() << "\n\n";
+    }
+    void hr(int i) {
+        std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~ "
+                  << i
+                  <<" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
     }
 };

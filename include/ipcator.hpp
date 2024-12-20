@@ -2,7 +2,7 @@
 // #define NDEBUG
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint
-#include <cassert>  // assert
+#include <cassert>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
 #include <cstdint>  // uint8_t
@@ -15,17 +15,17 @@
 #include <ostream>  // ostream
 #include <random>  // mt19937, random_device, uniform_int_distribution
 #include <ranges>  // views::{chunk,transform,join_with,iota}
-#include <set>  // set
+#include <set>
 #include <source_location>  // source_location::current
-#include <span>  // span
-#include <string>  // string, operator""s
-#include <string_view>  // string_view, operator""sv
+#include <span>
+#include <string>  // operator""s
+#include <string_view>  // operator""sv
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
-#include <unordered_set>  // unordered_set
+#include <unordered_set>
 #include <utility>  // as_const, move, swap, unreachable, hash, exchange
 #include <variant>  // monostate
-#include <version>  // __cpp_lib_associative_heterogeneous_erasure
+#include <version>
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
@@ -373,6 +373,11 @@ struct std::formatter<Shared_Memory<creat>> {
         );
     }
 };
+
+template <auto creat>
+auto std::swap(Shared_Memory<creat>& a, decltype(a) b) {
+    return swap(a, b);
+}
 
 /**
  * 创建 指定大小的 名字随机生成的 shm obj, 以读写模式映射.
