@@ -350,19 +350,24 @@ struct std::formatter<Shared_Memory<creat>> {
     auto format(const auto& shm, auto& context) const {
         constexpr auto obj_constructor = [] consteval {
             if (creat)
-                return "Shared_Memory<true>";
+                return "Shared_Memory<creat=true>";
             else
-                return "Shared_Memory<false>";
+                return "Shared_Memory<creat=false>";
         }();
-
         const auto addr = (const void *)(shm.get_area().data());
         const auto length = std::size(shm.get_area());
-        const auto name = shm.get_name().substr(0, 54);
+        const auto name = [&] {
+            const auto name = shm.get_name();
+            if (name.length() <= 57)
+                return name;
+            else
+                return name.substr(0, 54) + "...";
+        }();
         return std::vformat_to(
             context.out(),
             R":({{
     "area": {{ "&addr": {}, "|length|": {} }},
-    "name": "{}...",
+    "name": "{}",
     "constructor()": "{}"
 }}):",
             std::make_format_args(
