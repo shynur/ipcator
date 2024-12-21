@@ -5,6 +5,8 @@
 #endif
 
 
+using std::swap;
+
 struct Print_Fences {
     const std::string f;
     Print_Fences(const char *f);

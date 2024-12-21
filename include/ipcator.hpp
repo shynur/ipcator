@@ -177,7 +177,7 @@ class Shared_Memory {
                 const auto [addr, length] = map_shm<>(name);
                 return {
                     (const std::uint8_t *)addr,
-                    length
+                    length,
                 };
             }()
         } {
@@ -276,11 +276,15 @@ class Shared_Memory {
             return std::ranges::fold_left(
                 this->area
                 | std::views::chunk(num_col)
-                | std::views::transform(std::bind_back(
-                    std::bit_or<>{},
-                    std::views::transform([](auto& B) { return std::format("{:02X}", B); })
-                    | std::views::join_with(space)
-                ))
+                | std::views::transform(
+                    std::bind_back(
+                        std::bit_or<>{},
+                        std::views::transform([](auto& B) {
+                            return std::format("{:02X}", B);
+                        })
+                        | std::views::join_with(space)
+                    )
+                )
                 | std::views::join_with('\n'),
                 ""s, std::plus<>{}
             );
@@ -545,7 +549,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 
     protected:
         void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
-            if (alignment > getpagesize() + 0u) {
+            if (alignment > getpagesize() + 0u) [[unlikely]] {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
                     TooLargeAlignment(const std::size_t demanded_alignment) noexcept
