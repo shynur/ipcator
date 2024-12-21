@@ -87,7 +87,7 @@ struct Tester {
 
         Shared_Memory reader = std::string{"/one-more-shm"};
 
-        std::swap(writer_a, writer_b);  // 交换所有权.
+        swap(writer_a, writer_b);  // 交换所有权.
         writer_b[5] = 5;
 
         std::cout << "读取 writer_b 在原 writer_a 持有的内存上写入的 byte: "

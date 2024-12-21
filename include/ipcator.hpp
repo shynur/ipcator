@@ -190,7 +190,11 @@ class Shared_Memory {
             }
         }
         Shared_Memory(Shared_Memory&& other) noexcept
-        : name{std::move(other.name)}, area{std::exchange(other.area, {})} {}
+        : name{std::move(other.name)}, area{
+            // Self 的析构函数靠 ‘area’ 是否为空来判断
+            // 是否持有所有权, 所以此处需要强制置空.
+            std::exchange(other.area, {})
+        } {}
         /**
          * 在进程地址空间的另一处映射一个相同的 shm obj.
          */
