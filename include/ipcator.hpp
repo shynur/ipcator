@@ -36,12 +36,13 @@ using std::operator""s, std::operator""sv;
 
 
 namespace {
-    constexpr auto DEBUG
+    constexpr auto DEBUG =
 #ifdef NDEBUG
-                        = false;
+            false
 #else
-                        = true;
+            true
 #endif
+    ;
 }
 
 
@@ -113,6 +114,7 @@ namespace {
             );
         };
     }([](const auto fd, const std::size_t size) {
+        assert(size);
         const auto area_addr = mmap(
             nullptr, size,
             (creat ? PROT_WRITE : 0) | PROT_READ,
@@ -484,7 +486,7 @@ auto operator""_shm(const unsigned long long size) {
         std::source_location::current().function_name() + "\n"s  \
         + std::vformat(  \
             (color == "green"sv ? "\033[32m" : "\033[31m")  \
-            + "\tsize={}, &area={}, alignment={}\033[0m\n"s,  \
+            + "\tsize={}, &area={}, alignment={}\033[0m"s,  \
             std::make_format_args(size, (const void *const&)area, alignment)  \
         ) + '\n'  \
 )
@@ -548,7 +550,9 @@ class ShM_Resource: public std::pmr::memory_resource {
         > resources;
 
     protected:
-        void *do_allocate(const std::size_t size, const std::size_t alignment) noexcept(false) override {
+        void *do_allocate(
+            const std::size_t size, const std::size_t alignment
+        ) noexcept(false) override {
             if (alignment > getpagesize() + 0u) [[unlikely]] {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
@@ -579,7 +583,9 @@ class ShM_Resource: public std::pmr::memory_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]) override {
+        void do_deallocate(
+            void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]
+        ) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
             const auto whatcanisay_shm_out = std::move(
@@ -637,11 +643,15 @@ class ShM_Resource: public std::pmr::memory_resource {
         /**
          * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中.
          */
-        auto find_arena(const void *const obj) const -> const auto& requires(using_ordered_set) {
+        auto find_arena(const auto *const obj) const
+        -> const auto& requires(using_ordered_set) {
             const auto& shm = *(
-                --this->resources.upper_bound(obj)
+                --this->resources.upper_bound((const void *)obj)
             );
-            assert(shm.get_area().data() <= obj);
+            assert(
+                (const void *)&*shm.get_area().cbegin() <= (const void *)obj
+                && (const void *)(obj + 1) <= (const void *)&*shm.get_area().cend()
+            );
 
             return shm;
         }
@@ -699,17 +709,17 @@ struct std::formatter<ShM_Resource<set_t>> {
             return std::vformat_to(
                 context.out(),
                 R":({{
-        "resources":
+    "resources":
     {{
         "|size|": {},
         "values":
-    [
+        [
 {}
-    ]
+        ]
     }},
-        "last_inserted":
+    "last_inserted":
 {},
-        "constructor()": "ShM_Resource<std::unordered_set>"
+    "constructor()": "ShM_Resource<std::unordered_set>"
 }}):",
                 std::make_format_args(
                     size,
@@ -744,14 +754,19 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         }
 
     protected:
-        void *do_allocate(const std::size_t size, const std::size_t alignment) override {
+        void *do_allocate(
+            const std::size_t size, const std::size_t alignment
+        ) override {
             const auto area = this->monotonic_buffer_resource::do_allocate(
                 size, alignment
             );
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
+
+        void do_deallocate(
+            void *const area, const std::size_t size, const std::size_t alignment
+        ) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
             // 虚晃一枪; actually no-op.
@@ -781,14 +796,19 @@ class ShM_Pool: public std::conditional_t<
         >;
 
     protected:
-        void *do_allocate(const std::size_t size, const std::size_t alignment) override {
+        void *do_allocate(
+            const std::size_t size, const std::size_t alignment
+        ) override {
             const auto area = this->midstream_pool_t::do_allocate(
                 size, alignment
             );
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate(void *const area, const std::size_t size, const std::size_t alignment) override {
+
+        void do_deallocate(
+            void *const area, const std::size_t size, const std::size_t alignment
+        ) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
             this->midstream_pool_t::do_deallocate(area, size, alignment);
         }

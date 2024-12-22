@@ -1,7 +1,7 @@
 #include "ipcator.hpp"
 #include <chrono>
 #ifdef __cpp_lib_print
-#include <print>
+#  include <print>
 #endif
 
 
@@ -17,10 +17,13 @@ struct Print_Fences {
 
 struct Tester {
     Tester() {
-        std::setbuf(stdout, 0);
-        print_sys_info();
-        shared_memory();
-        // shm_resource();
+        prelude();
+
+        //shared_memory();
+        //shm_resource();
+        mono_buffer();
+        sync_pool();
+        unsync_pool();
     }
     void shm_1() {
         Print_Fences pf = __func__;
@@ -137,6 +140,7 @@ struct Tester {
     }
     void shm_benchmark(const unsigned times) {
         Print_Fences pf = __func__;
+        1_shm;  // 预热, 避免冷启动.
 
         const auto start = std::chrono::high_resolution_clock::now();
         for (auto _ : std::views::iota(0) | std::views::take(times)) {
@@ -149,6 +153,7 @@ struct Tester {
         std::cout << "平均耗时: "
                   << std::chrono::duration_cast<std::chrono::microseconds>(end - start) / (double)times
                   << '\n';
+        pf.hr();
     }
     /**
      * RAII 绑定共享内存的示例.
@@ -161,57 +166,85 @@ struct Tester {
         shm_5();
         shm_benchmark(1'0000);
     }
+    /* 内部使用红黑树注册共享内存对象的资源管理器 */
+    void shmresrc_rbtree() {
+        Print_Fences pf = __func__;
 
-    /* 原始的共享内存分配器, 一次性分配一整块共享内存, 管理多块共享内存.  */
-    void shm_resource() {
-        /* 内部使用红黑树的资源管理器 */
-        {
-            ShM_Resource resrc_set;
-            auto addr1 = resrc_set.allocate(123);
-            std::ignore = resrc_set.allocate(300);
-            // 假设在 addr1[50] 上有一个对象 obj:
-            auto obj = (char *)addr1 + 50;
-            // 查询该对象在所在的共享内存:
-            auto& shm = resrc_set.find_arena(obj);
-            std::cout << "\n对象 " << (void *)obj
-                      << " 位于 " << shm
-                      << '\n';
+        ShM_Resource rs;
+        auto addr = (char *)rs.allocate(123);  // 申请大小为 123 的共享内存.
+        std::ignore = rs.allocate(300);
 
-            // 打印底层注册表:
-            for (auto& shm : resrc_set.get_resources())
-                std::cout << "resrc_map 中的: " << shm << '\n';
+        // 假设在 addr[50] 上有一个字符串:
+        auto ltdz = new(addr + 50) std::string{"1! 5!"};
+        // 查询该对象所在的共享内存:
+        const Shared_Memory<true>& shm = rs.find_arena(ltdz);
 
-            // resrc_map.get_resources().clear();  ==>  Error!  默认不可变,
-            // 除非是 纯右值 或者 将亡值:
-            ShM_Resource{}.get_resources().clear();
+        std::cout << (const std::string&)shm[50] << '\n';
 
-            // 自动释放存储...
-        }
+        std::move(rs).get_resources().emplace("/another-shm"_shm[996]);
+        // 将独立的 `Shared_Momory<true>` 交给 rs 托管.
 
-        /* 内部使用哈希表的资源管理器 */
-        {
-            ShM_Resource<std::unordered_set> resrc_uoset;
-            std::ignore = resrc_uoset.allocate(100);
-            std::ignore = resrc_uoset.allocate(200);
-
-            // 查看内部信息, 例如最近一次注册的是哪块共享内存:
-            std::cout << "`last_inserted` 字段表示上次插入的共享内存:\n"
-                      << resrc_uoset << '\n';
-
-            // `resrc_hash` 底层使用哈希表, 所以没有 `find_arena` 方法.
-            // resrc_hash.find_arena(nullptr);  ==>  Error!
-        }
-
-        ShM_Resource a, b;
-        assert(a != b);
-        // 如果等于, 则由 a 分配的内存可由 b 释放.
+        pf.hr();
     }
+    /* 内部使用哈希表注册共享内存的资源管理器 */
+    void shmresrc_hashtb() {
+        Print_Fences pf = __func__;
 
-    void mono_buffer() {}
-    void sync_pool() {}
-    void unsync_pool() {}
+        ShM_Resource<std::unordered_set> rs;
+        std::ignore = rs.allocate(1);
+        std::ignore = rs.allocate(2);
+
+        // 查看内部信息, 例如最近一次注册的是哪块共享内存:
+        std::cout << "`last_inserted` 字段表示上次插入的共享内存:\n"
+                  << rs << '\n';
+        // `ShM_Resource<std::unordered_set>` 底层使用哈希表, 所以没有 `find_arena` 方法.
+        // resrc_hash.find_arena(nullptr);  // ==>  Error!
+
+        // 可手动 GC:
+        std::move(rs).get_resources().clear();
+        // Note, 左值/const 时不允许修改:
+        // rs.get_resources().clear();  // ==> Error!
+
+        pf.hr();
+    }
+    template <class shmresrc_t>
+    void shmresrc_benchmark(const unsigned times) {
+        Print_Fences pf = __func__;
+        1_shm;  // 预热, 避免冷启动.
+
+        shmresrc_t rs;
+        const auto start = std::chrono::high_resolution_clock::now();
+        for (auto _ : std::views::iota(0) | std::views::take(times)) {
+            auto addr = rs.allocate(1 + std::rand() % 4095);
+            if constexpr (shmresrc_t::using_ordered_set)
+                rs.find_arena(addr);
+        }
+        std::move(rs).get_resources().clear();
+        const auto end = std::chrono::high_resolution_clock::now();
+
+        std::cout << "平均耗时: "
+                  << std::chrono::duration_cast<std::chrono::microseconds>(end - start) / (double)times
+                  << '\n';
+        pf.hr();
+    }
+    /**
+     * 原始的共享内存分配器, 一次性分配一整块共享内存, 管理多块共享内存.
+     */
+    void shm_resource() {
+        shmresrc_rbtree();
+        shmresrc_hashtb();
+        shmresrc_benchmark<ShM_Resource<        >>(2'0000);
+        shmresrc_benchmark<ShM_Resource<std::set>>(2'0000);
+    }
+    void mono_buffer() {/* TODO */}
+    void sync_pool() {/* TODO */}
+    void unsync_pool() {/* TODO */}
     void print_sys_info() {
         std::cout << "页表大小 = " << getpagesize() << "\n\n";
+    }
+    void prelude() {
+        std::setbuf(stdout, 0), std::setbuf(stderr, 0);
+        print_sys_info();
     }
 };
 
