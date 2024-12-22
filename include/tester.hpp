@@ -22,8 +22,8 @@ struct Tester {
         //shared_memory();
         //shm_resource();
         mono_buffer();
+        //unsync_pool();
         sync_pool();
-        unsync_pool();
     }
     void shm_1() {
         Print_Fences pf = __func__;
@@ -215,7 +215,7 @@ struct Tester {
         shmresrc_t rs;
         const auto start = std::chrono::high_resolution_clock::now();
         for (auto _ : std::views::iota(0) | std::views::take(times)) {
-            auto addr = rs.allocate(1 + std::rand() % 4095);
+            auto addr = rs.allocate(1984);
             if constexpr (shmresrc_t::using_ordered_set)
                 rs.find_arena(addr);
         }
@@ -236,9 +236,32 @@ struct Tester {
         shmresrc_benchmark<ShM_Resource<        >>(2'0000);
         shmresrc_benchmark<ShM_Resource<std::set>>(2'0000);
     }
-    void mono_buffer() {/* TODO */}
+    template <class pmr_resrc_t>
+    void thrdunsafe_pmr_benchmark(const unsigned times) {
+        Print_Fences pf = __func__;
+        1_shm;
+
+        pmr_resrc_t rs;
+        const auto start = std::chrono::high_resolution_clock::now();
+        for (auto _ : std::views::iota(0) | std::views::take(times))
+            std::ignore = rs.allocate(1984);
+        rs.release();
+        const auto end = std::chrono::high_resolution_clock::now();
+
+        std::cout << "平均耗时: "
+                  << std::chrono::duration_cast<std::chrono::microseconds>(end - start) / (double)times
+                  << '\n';
+        pf.hr();
+    }
+    void mono_buffer() {
+        /* TODO */
+        thrdunsafe_pmr_benchmark<Monotonic_ShM_Buffer>(2'0000);
+    }
+    void unsync_pool() {
+        /* TODO */
+        thrdunsafe_pmr_benchmark<ShM_Pool<false>>(2'0000);
+    }
     void sync_pool() {/* TODO */}
-    void unsync_pool() {/* TODO */}
     void print_sys_info() {
         std::cout << "页表大小 = " << getpagesize() << "\n\n";
     }
