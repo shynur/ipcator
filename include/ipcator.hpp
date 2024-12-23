@@ -5,11 +5,10 @@
 #include <cassert>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
-#include <cstdint>  // uint8_t
 #include <format>  // formatter, format_error, vformat{_to,}, make_format_args
 #include <functional>  // bind_back, bit_or, plus
 #include <iostream>  // clog
-#include <iterator>  // size
+#include <iterator>  // size, {,c}{begin,end}
 #include <memory_resource>  // pmr::{memory_resource,monotonic_buffer_resource,{,un}synchronized_pool_resource,pool_options}
 #include <new>  // bad_alloc
 #include <ostream>  // ostream
@@ -147,7 +146,7 @@ class Shared_Memory {
         std::span<
             std::conditional_t<
                 creat,
-                std::uint8_t, const std::uint8_t
+                unsigned char, const unsigned char
             >
         > area;
     public:
@@ -157,7 +156,7 @@ class Shared_Memory {
          */
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
-            (std::uint8_t *)map_shm<creat>(name, size),
+            (unsigned char *)map_shm<creat>(name, size),
             size,
         } {
             if (DEBUG) {
@@ -178,7 +177,7 @@ class Shared_Memory {
             [&] -> decltype(this->area) {
                 const auto [addr, length] = map_shm<>(name);
                 return {
-                    (const std::uint8_t *)addr,
+                    (const unsigned char *)addr,
                     length,
                 };
             }()
@@ -238,7 +237,7 @@ class Shared_Memory {
                 // 当所有 shm 都被 ‘munmap’ed 后, 共享内存将被 deallocate.
 
             munmap(
-                const_cast<std::uint8_t *>(this->area.data()),
+                const_cast<unsigned char *>(this->area.data()),
                 std::size(this->area)
             );
 
@@ -246,13 +245,13 @@ class Shared_Memory {
                 std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m", *this) + '\n';
         }
 
-        auto get_name() const { return this->name; }
+        auto& get_name() const { return this->name; }
         auto get_area(this auto& self) -> const auto& {
             if constexpr (!creat)
                 return self.area;
             else
                 if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
-                    return reinterpret_cast<const std::span<const std::uint8_t>&>(self.area);
+                    return reinterpret_cast<const std::span<const unsigned char>&>(self.area);
                 else
                     return self.area;
         }
@@ -323,14 +322,14 @@ class Shared_Memory {
         /* impl std::ranges::range for Self */
         auto& operator[](this auto& self, const std::size_t i) {
             assert(i < std::size(self));
-            return *(self.begin() + i);
+            return *(std::begin(self) + i);
         }
 #ifdef __cpp_multidimensional_subscript
         auto operator[](this auto& self, const std::size_t start, decltype(start) end) {
             assert(start <= end && end <= std::size(self));
             return std::span{
-                self.begin() + start,
-                self.begin() + end,
+                std::begin(self) + start,
+                std::begin(self) + end,
             };
         }
 #endif
@@ -338,16 +337,14 @@ class Shared_Memory {
          * 被映射的起始地址.
          */
         auto data(this auto& self) {
-            auto& front = *self.begin();
+            auto& front = *std::begin(self);
             if constexpr (requires {front = 0;})
                 return (void *)&front;
             else
                 return (const void *)&front;
         }
-        auto begin(this auto& self) { return self.get_area().begin(); }
-        auto end(this auto& self) { return self.begin() + std::size(self); }
-        auto cbegin() const { return this->begin(); }
-        auto cend() const { return this->end(); }
+        auto begin(this auto& self) { return std::begin(self.get_area()); }
+        auto end(this auto& self) { return std::begin(self) + std::size(self); }
         /**
          * 映射的区域大小.
          */
@@ -517,15 +514,15 @@ class ShM_Resource: public std::pmr::memory_resource {
         struct ShM_As_Addr {
             using is_transparent = int;
 
-            auto get_addr(const auto& area_or_ptr) const noexcept
+            auto get_addr(const auto& shm_or_ptr) const noexcept
             -> const void * {
                 if constexpr (std::is_same_v<
-                    std::decay_t<decltype(area_or_ptr)>,
+                    std::decay_t<decltype(shm_or_ptr)>,
                     const void *
                 >)
-                    return area_or_ptr;
+                    return shm_or_ptr;
                 else
-                    return area_or_ptr.get_area().data();
+                    return shm_or_ptr.get_area().data();
             }
 
             /* As A Comparer */
@@ -539,8 +536,8 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
             /* As A Hasher */
             auto operator()(const auto& shm) const noexcept {
-                const auto addr = get_addr(shm);
-                return std::hash<std::decay_t<decltype(addr)>>{}(addr);
+                const auto addr = this->get_addr(shm);
+                return std::hash<const void *>{}(addr);
             }
         };
         std::conditional_t<
@@ -575,7 +572,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 generate_shm_UUName(),
                 size
             );
-            assert(ok);
+            assert(ok);  [[assume(ok)]];
             if constexpr (!using_ordered_set)
                 this->last_inserted = &*inserted;
 
@@ -614,9 +611,9 @@ class ShM_Resource: public std::pmr::memory_resource {
             if (DEBUG) {
                 // 显式删除以触发日志输出.
                 while (!this->resources.empty()) {
-                    const auto& area = this->resources.cbegin()->get_area();
+                    const auto& area = std::cbegin(this->resources)->get_area();
                     this->deallocate(
-                        const_cast<std::uint8_t *>(area.data()),
+                        const_cast<unsigned char *>(area.data()),
                         std::size(area)
                     );
                 }
@@ -649,8 +646,12 @@ class ShM_Resource: public std::pmr::memory_resource {
                 --this->resources.upper_bound((const void *)obj)
             );
             assert(
-                (const void *)&*shm.get_area().cbegin() <= (const void *)obj
-                && (const void *)(obj + 1) <= (const void *)&*shm.get_area().cend()
+                (const unsigned char *)obj + [&]{
+                    if constexpr (requires {*obj;})
+                        return sizeof *obj;
+                    else
+                        return 1;
+                }() <= &*std::cend(shm.get_area())
             );
 
             return shm;
@@ -830,4 +831,54 @@ class ShM_Pool: public std::conditional_t<
                 this->upstream_resource()
             );
         }
+};
+
+
+struct ShM_Obj_Reader {
+    struct ShM_As_Str {
+        using is_transparent = int;
+
+        auto get_name(const auto& shm_or_name) const noexcept
+        -> const auto& {
+            if constexpr (std::is_same_v<
+                std::decay_t<decltype(shm_or_name)>,
+                std::string
+            >)
+                return shm_or_name;
+            else
+                return shm_or_name.get_name();
+        }
+
+        /* Hash */
+        auto operator()(const Shared_Memory<false>& shm) const noexcept {
+            const auto& name = this->get_name(shm);
+            return std::hash<std::string>{}(name);
+        }
+        auto operator()(const std::string& shm) const noexcept {
+            const auto& name = this->get_name(shm);
+            return std::hash<std::string>{}(name);
+        }
+        /* KeyEqual */
+        bool operator()(const auto& a, const auto& b) const noexcept {
+            return this->get_name(a) == this->get_name(b);
+        }
+    };
+    std::unordered_set<Shared_Memory<false>, ShM_As_Str, ShM_As_Str> cache;
+
+    template <typename T>
+    auto read(const void *const p) -> const T& {
+        return *(T *)p;
+    }
+
+    auto select_shm(const std::string name) -> const auto& {
+        if (
+            const auto pshm = this->cache.find(name);
+            pshm == std::cend(this->cache)
+        ) {
+            const auto [inserted, ok] = this->cache.emplace(name);
+            assert(ok);  [[assume(ok)]];
+            return *inserted;
+        } else
+            return *pshm;
+    }
 };
