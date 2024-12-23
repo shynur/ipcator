@@ -850,11 +850,7 @@ struct ShM_Obj_Reader {
         }
 
         /* Hash */
-        auto operator()(const Shared_Memory<false>& shm) const noexcept {
-            const auto& name = this->get_name(shm);
-            return std::hash<std::string>{}(name);
-        }
-        auto operator()(const std::string& shm) const noexcept {
+        std::size_t operator()(const auto& shm) const noexcept {
             const auto& name = this->get_name(shm);
             return std::hash<std::string>{}(name);
         }
