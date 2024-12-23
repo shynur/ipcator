@@ -1,5 +1,5 @@
 SHELL = bash
-CXX = g++ -fdiagnostics-color=always
+CXX = $(shell echo $${CXX:-g++}) -fdiagnostics-color=always
 CXXFLAGS = -std=c++26  \
            -O0 -fno-omit-frame-pointer  \
            -ggdb3 -fvar-tracking -gcolumn-info -femit-class-debug-always  \
@@ -12,11 +12,13 @@ LDFLAGS = -lrt
 
 .PHONY: run
 run:  bin/debug.exe
+	rm -f /dev/shm/github_dot_com_slash_shynur_slash_ipcator-?*
 	@time $<
 	echo $$?
 
 .PHONY: run-build
 run-build:  bin/release.exe
+	rm -f /dev/shm/github_dot_com_slash_shynur_slash_ipcator-?*
 	@time $<
 	echo $$?
 
@@ -25,9 +27,7 @@ run-build:  bin/release.exe
 try-backport:
 	read  &&  \
 	$(CXX) -std=c++$$REPLY -fpermissive -fconcepts -w -O0 -g0 -Iinclude $(LDFLAGS)  \
-	  -o bin/backport-$$REPLY.exe -D'NDEBUG'  src/main.cpp  &&  \
-	bin/backport-$$REPLY.exe
-	echo $$?
+	  -o bin/backport-$$REPLY.exe -D'NDEBUG'  src/main.cpp
 
 bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin

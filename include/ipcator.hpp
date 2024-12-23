@@ -452,7 +452,7 @@ namespace {
                     available_chars,
                     gen = std::mt19937{std::random_device{}()},
                     distri = std::uniform_int_distribution<>{0, available_chars.length()-1}
-                ](auto......) mutable {
+                ](...) mutable {
                     return available_chars[distri(gen)];
                 }),
                 ""s, std::plus<>{}
@@ -850,7 +850,8 @@ struct ShM_Obj_Reader {
         }
 
         /* Hash */
-        std::size_t operator()(const auto& shm) const noexcept {
+        auto operator()(const auto& shm) const noexcept
+        -> std::size_t {
             const auto& name = this->get_name(shm);
             return std::hash<std::string>{}(name);
         }
