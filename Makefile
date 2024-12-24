@@ -1,14 +1,16 @@
 SHELL = bash
-CXX = $(shell echo $${CXX:-g++}) -fdiagnostics-color=always
-CXXFLAGS = -std=c++26  \
-           -O0 -fno-omit-frame-pointer  \
-           -ggdb3 -fvar-tracking -gcolumn-info -femit-class-debug-always  \
-                  -gstatement-frontiers -fno-eliminate-unused-debug-types  \
-                  -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
-                  -fno-eliminate-unused-debug-symbols  \
+CXX = $(shell echo $${CXX:-g++}) -fdiagnostics-color=always -std=c++26
+CXXDEBUG = -ggdb3  \
+           -fvar-tracking -gcolumn-info -femit-class-debug-always  \
+           -gstatement-frontiers -fno-eliminate-unused-debug-types  \
+           -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
+           -fno-eliminate-unused-debug-symbols
+CXXFLAGS = -O0 -fno-omit-frame-pointer  \
+           $(CXXDEBUG)  \
            -Wpedantic -Wall -W -fconcepts-diagnostics-depth=9 -fdiagnostics-all-candidates  \
            -Iinclude
 LDFLAGS = -lrt
+
 
 .PHONY: run
 run:  bin/debug.exe
@@ -45,8 +47,9 @@ bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 
 bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
 	@mkdir -p bin
-	time $(CXX) -std=c++26 -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+	time $(CXX) -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
 	@echo '************************** 编译完成 **************************'
+
 
 .PHONY: git
 git:
@@ -56,3 +59,21 @@ git:
 .PHONY: clean
 clean:
 	rm -rf bin/
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+.PHONY: ipc
+ipc: bin/writer.exe bin/reader.exe
+	rm -f /dev/shm/{ipcator-ipc-test,github_dot_com_slash_shynur_slash_ipcator}*
+	@echo
+	@for exe in $^; do $$exe & done
+	@wait
+	@sleep 1
+	@echo
+
+bin/writer.exe: src/writer.cpp  include/ipcator.hpp
+	@mkdir -p bin
+	time $(CXX) -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+
+bin/reader.exe: src/reader.cpp  include/ipcator.hpp
+	@mkdir -p bin
+	time $(CXX) -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<

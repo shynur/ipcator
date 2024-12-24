@@ -17,8 +17,8 @@
 #include <set>
 #include <source_location>  // source_location::current
 #include <span>
-#include <string>  // operator""s
-#include <string_view>  // operator""sv
+#include <string>
+#include <string_view>
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>
@@ -29,9 +29,7 @@
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
 #include <unistd.h>  // close, ftruncate, getpagesize
-
-
-using std::operator""s, std::operator""sv;
+using namespace std::literals;
 
 
 namespace {
@@ -212,7 +210,7 @@ class Shared_Memory {
          */
         Shared_Memory(const Shared_Memory<!creat>& other) requires(!creat)
         : Shared_Memory{other.get_name()} { /* 同上 */ }
-        friend void swap(Shared_Memory& a, Shared_Memory& b) noexcept {
+        friend void swap(Shared_Memory& a, decltype(a) b) noexcept {
             std::swap(a.name, b.name);
             std::swap(a.area, b.area);
         }
@@ -358,6 +356,10 @@ Shared_Memory(
 ) -> Shared_Memory<false>;
 
 static_assert( !std::copy_constructible<Shared_Memory<true>> );
+static_assert(
+    std::ranges::contiguous_range<Shared_Memory<false>>
+    && std::ranges::sized_range<Shared_Memory<false>>
+);
 
 template <auto creat>
 struct std::formatter<Shared_Memory<creat>> {
@@ -503,18 +505,22 @@ class ShM_Resource: public std::pmr::memory_resource {
                 return true;
             else if (std::is_same_v<set_t<int>, std::unordered_set<int>>)
                 return false;
-            else
-#ifdef __cpp_lib_unreachable
+            else {
+#ifndef __GNUG__  // GCC 未修复 CWG2518.
+                static_assert(false, "只接受 ‘std::{,unordered_}set’ 作为注册表格式.");
+#elifdef __cpp_lib_unreachable
                 std::unreachable();
 #else
+                assert(false);
                 return bool{};
 #endif
+            }
         }();
     private:
         struct ShM_As_Addr {
             using is_transparent = int;
 
-            auto get_addr(const auto& shm_or_ptr) const noexcept
+            static auto get_addr(const auto& shm_or_ptr) noexcept
             -> const void * {
                 if constexpr (std::is_same_v<
                     std::decay_t<decltype(shm_or_ptr)>,
@@ -526,8 +532,8 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
 
             /* As A Comparer */
-            bool operator()(const auto& a, const auto& b) const noexcept {
-                const auto pa = this->get_addr(a), pb = this->get_addr(b);
+            static bool operator()(const auto& a, const auto& b) noexcept {
+                const auto pa = get_addr(a), pb = get_addr(b);
 
                 if constexpr (using_ordered_set)
                     return pa < pb;
@@ -535,9 +541,9 @@ class ShM_Resource: public std::pmr::memory_resource {
                     return pa == pb;
             }
             /* As A Hasher */
-            auto operator()(const auto& shm) const noexcept {
-                const auto addr = this->get_addr(shm);
-                return std::hash<const void *>{}(addr);
+            static auto operator()(const auto& shm) noexcept {
+                const auto addr = get_addr(shm);
+                return std::hash<std::decay_t<decltype(addr)>>{}(addr);
             }
         };
         std::conditional_t<
@@ -607,6 +613,50 @@ class ShM_Resource: public std::pmr::memory_resource {
         }
 
     public:
+        ShM_Resource() = default;
+        ShM_Resource(ShM_Resource&& other) noexcept
+        : resources{
+            std::move(other.resources)
+        } {
+            if constexpr (!using_ordered_set)
+                this->last_inserted = std::move(other.last_inserted);
+        }
+
+#if __GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0  // 绕过 GCC-v15.0.0 的 bug.
+        friend class ShM_Resource<std::set>;  // see below:
+#endif
+        ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
+        : resources{[
+#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)
+            other_resources=std::move(other).get_resources()
+#else
+            &other_resources=other.resources
+#endif
+            , this
+        ]() mutable {
+                decltype(this->resources) resources;
+
+                while (!other_resources.empty())
+                    resources.insert(std::move(
+                        other_resources
+                        .extract(std::cbegin(other_resources))
+                        .value()
+                    ));
+
+                return resources;
+            }()
+        } {}
+
+        friend void swap(ShM_Resource& a, decltype(a) b) noexcept {
+            std::swap(a.resources, b.resources);
+
+            if constexpr (!using_ordered_set)
+                std::swap(a.last_inserted, b.last_inserted);
+        }
+        auto& operator=(ShM_Resource other) {
+            swap(*this, other);
+            return *this;
+        }
         ~ShM_Resource() {
             if (DEBUG) {
                 // 显式删除以触发日志输出.
@@ -672,6 +722,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 
 static_assert( std::movable<ShM_Resource<std::set>> );
 static_assert( std::movable<ShM_Resource<std::unordered_set>> );
+
 
 template <template <typename... T> class set_t>
 struct std::formatter<ShM_Resource<set_t>> {
@@ -749,8 +800,12 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         } {}
         ~Monotonic_ShM_Buffer() {
             this->release();
-            delete static_cast<ShM_Resource<std::unordered_set> *>(
-                this->upstream_resource()
+            delete this->monotonic_buffer_resource::upstream_resource();
+        }
+
+        auto upstream_resource() const -> const auto * {
+            return static_cast<ShM_Resource<std::unordered_set> *>(
+                this->monotonic_buffer_resource::upstream_resource()
             );
         }
 
@@ -772,7 +827,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
 
             // 虚晃一枪; actually no-op.
             // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
-            this->monotonic_buffer_resource::deallocate(area, size, alignment);
+            this->monotonic_buffer_resource::do_deallocate(area, size, alignment);
         }
 };
 
@@ -827,22 +882,26 @@ class ShM_Pool: public std::conditional_t<
         } {}
         ~ShM_Pool() {
             this->release();
-            delete static_cast<ShM_Resource<std::set> *>(
-                this->upstream_resource()
+            delete this->midstream_pool_t::upstream_resource();
+        }
+
+        auto upstream_resource() const -> const auto * {
+            return static_cast<ShM_Resource<std::set> *>(
+                this->midstream_pool_t::upstream_resource()
             );
         }
 };
 
 
-struct ShM_Obj_Reader {
+struct ShM_Reader {
     struct ShM_As_Str {
         using is_transparent = int;
 
-        auto get_name(const auto& shm_or_name) const noexcept
-        -> const auto& {
+        static auto get_name(const auto& shm_or_name) noexcept
+        -> std::string_view {
             if constexpr (std::is_same_v<
                 std::decay_t<decltype(shm_or_name)>,
-                std::string
+                std::string_view
             >)
                 return shm_or_name;
             else
@@ -850,32 +909,45 @@ struct ShM_Obj_Reader {
         }
 
         /* Hash */
-        auto operator()(const auto& shm) const noexcept
+        static auto operator()(const auto& shm) noexcept
         -> std::size_t {
-            const auto& name = this->get_name(shm);
-            return std::hash<std::string>{}(name);
+            const auto name = get_name(shm);
+            return std::hash<std::decay_t<decltype(name)>>{}(name);
         }
         /* KeyEqual */
-        bool operator()(const auto& a, const auto& b) const noexcept {
-            return this->get_name(a) == this->get_name(b);
+        static bool operator()(const auto& a, const auto& b) noexcept {
+            return get_name(a) == get_name(b);
         }
     };
     std::unordered_set<Shared_Memory<false>, ShM_As_Str, ShM_As_Str> cache;
 
-    template <typename T>
-    auto read(const void *const p) -> const T& {
-        return *(T *)p;
+    template <typename T, typename CharT = char> requires(sizeof(CharT) == 1)
+    auto read(
+        const std::basic_string_view<CharT> shm_name, const std::size_t offset
+    ) -> const auto& {
+        return *(T *)(
+            this->select_shm(
+                (const std::string_view&)shm_name
+            ).get_area().data() + offset
+        );
     }
 
-    auto select_shm(const std::string name) -> const auto& {
+    auto select_shm(const std::string_view name) -> const
+#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)  // 绕过 GCC-v15.0.0 的 bug.
+        auto
+#else
+        Shared_Memory<false>
+#endif
+    & {
         if (
-            const auto pshm = this->cache.find(name);
-            pshm == std::cend(this->cache)
-        ) {
-            const auto [inserted, ok] = this->cache.emplace(name);
+            const auto shm = this->cache.find(name);
+            shm != std::cend(this->cache)
+        )
+            return *shm;
+        else {
+            const auto [inserted, ok] = this->cache.emplace(std::string{name});
             assert(ok);  [[assume(ok)]];
             return *inserted;
-        } else
-            return *pshm;
+        }
     }
 };

@@ -244,8 +244,8 @@ struct Tester {
         pmr_resrc_t rs;
         const auto start = std::chrono::high_resolution_clock::now();
         for (auto _ : std::views::iota(0) | std::views::take(times))
-            std::ignore = rs.allocate(1984);
-        rs.release();
+            rs.deallocate(rs.allocate(198), 198);
+        //rs.release();
         const auto end = std::chrono::high_resolution_clock::now();
 
         std::cout << "平均耗时: "

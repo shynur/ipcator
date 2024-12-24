@@ -9,4 +9,8 @@ echo 20 | make try-backport  # 仅编译, 测试 C++20 兼容性
 echo 23 | make try-backport  # 同上, 测试 C++23
 ```
 
+```bash
+make ipc  # 测试进程间通信
+```
+
 见 [用法示例](./include/tester.hpp).
