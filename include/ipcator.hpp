@@ -622,12 +622,14 @@ class ShM_Resource: public std::pmr::memory_resource {
                 this->last_inserted = std::move(other.last_inserted);
         }
 
-#if __GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0  // 绕过 GCC-v15.0.0 的 bug.
+#if __GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0  \
+    || __clang_major__ == 20 && __clang_minor__ == 0 && __clang_patchlevel__ == 0
         friend class ShM_Resource<std::set>;  // see below:
 #endif
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
         : resources{[
-#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)
+#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)  \
+    && !(__clang_major__ == 20 && __clang_minor__ == 0 && __clang_patchlevel__ == 0)
             other_resources=std::move(other).get_resources()
 #else
             &other_resources=other.resources
@@ -933,7 +935,8 @@ struct ShM_Reader {
     }
 
     auto select_shm(const std::string_view name) -> const
-#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)  // 绕过 GCC-v15.0.0 的 bug.
+#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)  \
+    && !(__clang_major__ == 20 && __clang_minor__ == 0 && __clang_patchlevel__ == 0)
         auto
 #else
         Shared_Memory<false>
