@@ -4,7 +4,7 @@ CXXDEBUG = -ggdb3  \
            -fvar-tracking -gcolumn-info -femit-class-debug-always  \
            -gstatement-frontiers -fno-eliminate-unused-debug-types  \
            -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
-           -fno-eliminate-unused-debug-symbols
+           -fno-eliminate-unused-debug-symbols -ftrapv -fsanitize=undefined
 CXXFLAGS = -O0 -fno-omit-frame-pointer  \
            $(CXXDEBUG)  \
            -Wpedantic -Wall -W -fconcepts-diagnostics-depth=9 -fdiagnostics-all-candidates  \
@@ -63,17 +63,16 @@ clean:
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 .PHONY: ipc
 ipc: bin/writer.exe bin/reader.exe
-	rm -f /dev/shm/{ipcator-ipc-test,github_dot_com_slash_shynur_slash_ipcator}*
+	rm -f /dev/shm/{ipcator,github_dot_com_slash_shynur_slash_ipcator}-?*
 	@echo
-	@for exe in $^; do $$exe & done
+	@for exe in $^; do ($$exe; echo) & done
 	@wait
-	@sleep 1
 	@echo
 
 bin/writer.exe: src/writer.cpp  include/ipcator.hpp
 	@mkdir -p bin
-	time $(CXX) -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+	time $(CXX) $(CXXFLAGS) -Iinclude $(LDFLAGS) -o $@  $<
 
 bin/reader.exe: src/reader.cpp  include/ipcator.hpp
 	@mkdir -p bin
-	time $(CXX) -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
+	time $(CXX) $(CXXFLAGS) -Iinclude $(LDFLAGS) -o $@  $<

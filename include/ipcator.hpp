@@ -1,14 +1,14 @@
 #pragma once
 // #define NDEBUG
 #include <algorithm>  // ranges::fold_left
-#include <atomic>  // atomic_uint
+#include <atomic>  // atomic_uint, atomic_thread_fence, memory_order_release, memory_order_acquire
 #include <cassert>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
 #include <format>  // formatter, format_error, vformat{_to,}, make_format_args
 #include <functional>  // bind_back, bit_or, plus
 #include <iostream>  // clog
-#include <iterator>  // size, {,c}{begin,end}
+#include <iterator>  // size, {,c}{begin,end}, data, empty
 #include <memory_resource>  // pmr::{memory_resource,monotonic_buffer_resource,{,un}synchronized_pool_resource,pool_options}
 #include <new>  // bad_alloc
 #include <ostream>  // ostream
@@ -29,6 +29,7 @@
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
 #include <unistd.h>  // close, ftruncate, getpagesize
+#include <future>  // DEBUG...
 using namespace std::literals;
 
 
@@ -72,6 +73,23 @@ namespace {
         ) requires (sizeof...(size) == creat) {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
+            if (DEBUG && !creat) {
+                std::future opening = std::async(
+                    std::launch::async,
+                    [&] {
+                        while (true)
+                            if (const auto fd = shm_open(name.c_str(), O_RDONLY, 0666); fd != -1)
+                                return fd;
+                            else
+                                std::this_thread::sleep_for(0.1s);
+                    }
+                );
+                // 阻塞直至目标共享内存对象存在:
+                if (opening.wait_for(1s) == std::future_status::ready)
+                    close(opening.get());  // 确认存在即可, 然后关闭.
+                else
+                    std::exit(0);
+            }
             const auto fd = shm_open(
                 name.c_str(),
                 creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,
@@ -225,7 +243,7 @@ class Shared_Memory {
          * 取消映射, 并在 shm obj 的被映射数目为 0 的时候自动销毁它.
          */
         ~Shared_Memory() noexcept  {
-            if (this->area.data() == nullptr)
+            if (std::data(this->area) == nullptr)
                 return;
 
             // 🚫 Writer 将要拒绝任何新的连接请求:
@@ -235,7 +253,7 @@ class Shared_Memory {
                 // 当所有 shm 都被 ‘munmap’ed 后, 共享内存将被 deallocate.
 
             munmap(
-                const_cast<unsigned char *>(this->area.data()),
+                const_cast<unsigned char *>(std::data(this->area)),
                 std::size(this->area)
             );
 
@@ -335,11 +353,7 @@ class Shared_Memory {
          * 被映射的起始地址.
          */
         auto data(this auto& self) {
-            auto& front = *std::begin(self);
-            if constexpr (requires {front = 0;})
-                return (void *)&front;
-            else
-                return (const void *)&front;
+            return std::to_address(std::begin(self));
         }
         auto begin(this auto& self) { return std::begin(self.get_area()); }
         auto end(this auto& self) { return std::begin(self) + std::size(self); }
@@ -376,7 +390,7 @@ struct std::formatter<Shared_Memory<creat>> {
             else
                 return "Shared_Memory<creat=false>";
         }();
-        const auto addr = (const void *)(shm.get_area().data());
+        const auto addr = (const void *)std::data(shm.get_area());
         const auto length = std::size(shm.get_area());
         const auto name = [&] {
             const auto name = shm.get_name();
@@ -409,15 +423,19 @@ auto operator""_shm(const unsigned long long size);
 /**
  * - ‘"/name"_shm[size]’ 创建 指定大小的命名 shm obj, 以读写模式映射.
  * - ‘+"/name"_shm’ 将命名的 shm obj 以只读模式映射至本地.
+ * 这两种操作可以当成进程间的锁.
  */
-auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
+inline auto operator""_shm [[gnu::always_inline]] (const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
-        const char *name;
-        auto operator[](const std::size_t size) {
+        const char *const name;
+        inline auto operator[] [[gnu::always_inline]] (const std::size_t size) const {
+            std::atomic_thread_fence(std::memory_order_release);
             return Shared_Memory{name, size};
         }
-        auto operator+() const {
-            return Shared_Memory{name};
+        inline auto operator+ [[gnu::always_inline]] () const {
+            auto&& readonly_shm = Shared_Memory{name};
+            std::atomic_thread_fence(std::memory_order_acquire);
+            return readonly_shm;
         }
     };
     return ShM_Constructor_Proxy{name};
@@ -528,10 +546,10 @@ class ShM_Resource: public std::pmr::memory_resource {
                 >)
                     return shm_or_ptr;
                 else
-                    return shm_or_ptr.get_area().data();
+                    return std::data(shm_or_ptr.get_area());
             }
 
-            /* As A Comparer */
+            /* As A Comparator */
             static bool operator()(const auto& a, const auto& b) noexcept {
                 const auto pa = get_addr(a), pb = get_addr(b);
 
@@ -582,7 +600,9 @@ class ShM_Resource: public std::pmr::memory_resource {
             if constexpr (!using_ordered_set)
                 this->last_inserted = &*inserted;
 
-            const auto area = const_cast<Shared_Memory<true>&>(*inserted).get_area().data();
+            const auto area = std::data(
+                const_cast<Shared_Memory<true>&>(*inserted).get_area()
+            );
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
@@ -638,7 +658,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         ]() mutable {
                 decltype(this->resources) resources;
 
-                while (!other_resources.empty())
+                while (!std::empty(other_resources))
                     resources.insert(std::move(
                         other_resources
                         .extract(std::cbegin(other_resources))
@@ -662,10 +682,10 @@ class ShM_Resource: public std::pmr::memory_resource {
         ~ShM_Resource() {
             if (DEBUG) {
                 // 显式删除以触发日志输出.
-                while (!this->resources.empty()) {
+                while (!std::empty(this->resources)) {
                     const auto& area = std::cbegin(this->resources)->get_area();
                     this->deallocate(
-                        const_cast<unsigned char *>(area.data()),
+                        const_cast<unsigned char *>(std::data(area)),
                         std::size(area)
                     );
                 }
@@ -894,63 +914,70 @@ class ShM_Pool: public std::conditional_t<
         }
 };
 
-
+/**
+ * 给定 共享内存对象的名字 和 偏移量, 读取对应位置上的 对象.  每当
+ * 遇到一个陌生的 shm obj 名字, 都需要打开这个新的 📂 shm obj, 并
+ * 将其映射🎯到进程的地址空间.  默认情况下, 这些被映射的片段 (即类
+ * ‘Shared_Memory<false>’ 的实例) 会缓存起来, 直到数目达到预设策略
+ * 所指定的上限值 (例如, 用 LRU 算法时可以限制缓存的最大值).
+ */
 struct ShM_Reader {
-    struct ShM_As_Str {
-        using is_transparent = int;
-
-        static auto get_name(const auto& shm_or_name) noexcept
-        -> std::string_view {
-            if constexpr (std::is_same_v<
-                std::decay_t<decltype(shm_or_name)>,
-                std::string_view
-            >)
-                return shm_or_name;
-            else
-                return shm_or_name.get_name();
+        template <typename T, typename CharT = char> requires (sizeof(CharT) == 1)
+        auto read(
+            const std::basic_string_view<CharT> shm_name, const std::size_t offset
+        ) -> const auto& {
+            return *(T *)(
+                std::data(
+                    this->select_shm((const std::string_view&)shm_name).get_area()
+                ) + offset
+            );
         }
 
-        /* Hash */
-        static auto operator()(const auto& shm) noexcept
-        -> std::size_t {
-            const auto name = get_name(shm);
-            return std::hash<std::decay_t<decltype(name)>>{}(name);
-        }
-        /* KeyEqual */
-        static bool operator()(const auto& a, const auto& b) noexcept {
-            return get_name(a) == get_name(b);
-        }
-    };
-    std::unordered_set<Shared_Memory<false>, ShM_As_Str, ShM_As_Str> cache;
-
-    template <typename T, typename CharT = char> requires(sizeof(CharT) == 1)
-    auto read(
-        const std::basic_string_view<CharT> shm_name, const std::size_t offset
-    ) -> const auto& {
-        return *(T *)(
-            this->select_shm(
-                (const std::string_view&)shm_name
-            ).get_area().data() + offset
-        );
-    }
-
-    auto select_shm(const std::string_view name) -> const
+        auto select_shm(const std::string_view name) -> const
 #if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)  \
     && !(__clang_major__ == 20 && __clang_minor__ == 0 && __clang_patchlevel__ == 0)
-        auto
+            auto
 #else
-        Shared_Memory<false>
+            Shared_Memory<false>
 #endif
-    & {
-        if (
-            const auto shm = this->cache.find(name);
-            shm != std::cend(this->cache)
-        )
-            return *shm;
-        else {
-            const auto [inserted, ok] = this->cache.emplace(std::string{name});
-            assert(ok);  [[assume(ok)]];
-            return *inserted;
+        & {
+            if (
+                const auto shm = this->cache.find(name);
+                shm != std::cend(this->cache)
+            )
+                return *shm;
+            else {
+                const auto [inserted, ok] = this->cache.emplace(std::string{name});
+                assert(ok);  [[assume(ok)]];
+                return *inserted;
+            }
         }
-    }
+
+    private:
+        struct ShM_As_Str {
+            using is_transparent = int;
+
+            static auto get_name(const auto& shm_or_name) noexcept
+            -> std::string_view {
+                if constexpr (std::is_same_v<
+                    std::decay_t<decltype(shm_or_name)>,
+                    std::string_view
+                >)
+                    return shm_or_name;
+                else
+                    return shm_or_name.get_name();
+            }
+
+            /* Hash */
+            static auto operator()(const auto& shm) noexcept
+            -> std::size_t {
+                const auto name = get_name(shm);
+                return std::hash<std::decay_t<decltype(name)>>{}(name);
+            }
+            /* KeyEqual */
+            static bool operator()(const auto& a, const auto& b) noexcept {
+                return get_name(a) == get_name(b);
+            }
+        };
+        std::unordered_set<Shared_Memory<false>, ShM_As_Str, ShM_As_Str> cache;
 };
