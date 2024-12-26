@@ -423,19 +423,31 @@ auto operator""_shm(const unsigned long long size);
 /**
  * - ‘"/name"_shm[size]’ 创建 指定大小的命名 shm obj, 以读写模式映射.
  * - ‘+"/name"_shm’ 将命名的 shm obj 以只读模式映射至本地.
- * 这两种操作可以当成进程间的锁.
+ * 当 ‘size=1’ 时, 这两种操作成为进程间的同步机制.
  */
 inline auto operator""_shm [[gnu::always_inline]] (const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
         const char *const name;
         inline auto operator[] [[gnu::always_inline]] (const std::size_t size) const {
-            std::atomic_thread_fence(std::memory_order_release);
-            return Shared_Memory{name, size};
+            auto&& rdwr_shm = Shared_Memory{name, size};
+
+            if (size == 1) {
+                auto flag = std::atomic_ref{rdwr_shm[0]};
+                flag.fetch_or(true, std::memory_order_release);
+                flag.notify_all();
+            }
+
+            return rdwr_shm;
         }
         inline auto operator+ [[gnu::always_inline]] () const {
-            auto&& readonly_shm = Shared_Memory{name};
-            std::atomic_thread_fence(std::memory_order_acquire);
-            return readonly_shm;
+            auto&& rdonly_shm = Shared_Memory{name};
+
+            if (std::size(rdonly_shm.get_area()) == 1) {
+                auto flag = std::atomic_ref{rdonly_shm[0]};
+                flag.wait(false);
+            }
+
+            return rdonly_shm;
         }
     };
     return ShM_Constructor_Proxy{name};
