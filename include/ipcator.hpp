@@ -29,7 +29,10 @@
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
 #include <unistd.h>  // close, ftruncate, getpagesize
-#include <future>  // DEBUG...
+#ifndef NDEBUG
+#  include <chrono>
+#  include <future>
+#endif
 using namespace std::literals;
 
 
@@ -73,7 +76,7 @@ namespace {
         ) requires (sizeof...(size) == creat) {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
-            if (DEBUG && !creat) {
+            if constexpr (DEBUG && !creat) {
                 std::future opening = std::async(
                     std::launch::async,
                     [&] {
@@ -926,6 +929,13 @@ class ShM_Pool: public std::conditional_t<
         }
 };
 
+
+template <class ipcator_t>
+concept IPCator = std::is_same_v<ipcator_t, Monotonic_ShM_Buffer>
+                  || std::is_same_v<ipcator_t, ShM_Pool<true>>
+                  || std::is_same_v<ipcator_t, ShM_Pool<false>>;
+
+
 /**
  * 给定 共享内存对象的名字 和 偏移量, 读取对应位置上的 对象.  每当
  * 遇到一个陌生的 shm obj 名字, 都需要打开这个新的 📂 shm obj, 并
@@ -992,4 +1002,5 @@ struct ShM_Reader {
             }
         };
         std::unordered_set<Shared_Memory<false>, ShM_As_Str, ShM_As_Str> cache;
+        // TODO: LRU GC
 };
