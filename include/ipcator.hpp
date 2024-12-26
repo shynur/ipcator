@@ -447,7 +447,7 @@ inline auto operator""_shm [[gnu::always_inline]] (const char *const name, [[may
 
             if (std::size(rdonly_shm.get_area()) == 1) {
                 auto flag = std::atomic_ref{rdonly_shm[0]};
-                flag.wait(false);
+                flag.wait(false, std::memory_order_acquire);
             }
 
             return rdonly_shm;
