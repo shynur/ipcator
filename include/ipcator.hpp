@@ -22,7 +22,7 @@
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>
-#include <utility>  // as_const, move, swap, unreachable, hash, exchange
+#include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
 #include <variant>  // monostate
 #include <version>
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
@@ -931,9 +931,24 @@ class ShM_Pool: public std::conditional_t<
 
 
 template <class ipcator_t>
-concept IPCator = std::is_same_v<ipcator_t, Monotonic_ShM_Buffer>
-                  || std::is_same_v<ipcator_t, ShM_Pool<true>>
-                  || std::is_same_v<ipcator_t, ShM_Pool<false>>;
+concept IPCator = (
+    std::same_as<ipcator_t, Monotonic_ShM_Buffer>
+    || std::same_as<ipcator_t, ShM_Pool<true>>
+    || std::same_as<ipcator_t, ShM_Pool<false>>
+) && requires(ipcator_t ipcator) {  // PS, 这是个冗余条件, 但可以给 LSP 提供信息.
+    /* 可公开情报 */
+    requires std::derived_from<ipcator_t, std::pmr::memory_resource>;
+    requires requires {
+        {  ipcator.upstream_resource()->find_arena(new int) } -> std::same_as<const Shared_Memory<true>&>;
+    } || requires {
+        { *ipcator.upstream_resource()->last_inserted       } -> std::same_as<const Shared_Memory<true>&>;
+    };
+};
+static_assert(
+    IPCator<Monotonic_ShM_Buffer>
+    && IPCator<ShM_Pool<true>>
+    && IPCator<ShM_Pool<false>>
+);
 
 
 /**
