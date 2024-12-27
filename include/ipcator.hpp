@@ -3,10 +3,12 @@
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint, atomic_thread_fence, memory_order_release, memory_order_acquire
 #include <cassert>
+#include <chrono>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
 #include <format>  // formatter, format_error, vformat{_to,}, make_format_args
-#include <functional>  // bind_back, bit_or, plus
+#include <functional>  // bind{_back,}, bit_or, plus
+#include <future>  // async, future_status::ready
 #include <iostream>  // clog
 #include <iterator>  // size, {,c}{begin,end}, data, empty
 #include <memory_resource>  // pmr::{memory_resource,monotonic_buffer_resource,{,un}synchronized_pool_resource,pool_options}
@@ -19,6 +21,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>  // this_thread::sleep_for
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>
@@ -29,10 +32,6 @@
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
 #include <unistd.h>  // close, ftruncate, getpagesize
-#ifndef NDEBUG
-#  include <chrono>
-#  include <future>
-#endif
 using namespace std::literals;
 
 
@@ -76,28 +75,29 @@ namespace {
         ) requires (sizeof...(size) == creat) {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
-            if constexpr (DEBUG && !creat) {
-                std::future opening = std::async(
-                    std::launch::async,
-                    [&] {
-                        while (true)
-                            if (const auto fd = shm_open(name.c_str(), O_RDONLY, 0666); fd != -1)
-                                return fd;
-                            else
-                                std::this_thread::sleep_for(0.1s);
-                    }
-                );
-                // 阻塞直至目标共享内存对象存在:
-                if (opening.wait_for(1s) == std::future_status::ready)
-                    close(opening.get());  // 确认存在即可, 然后关闭.
-                else
-                    std::exit(0);
-            }
-            const auto fd = shm_open(
-                name.c_str(),
-                creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY,
-                0666
-            );
+            const auto fd = [](const auto do_open) {
+                if constexpr (creat)
+                    return do_open();
+                else {
+                    std::future opening = std::async(
+                        [&] {
+                            while (true)
+                                if (const auto fd = do_open(); fd != -1)
+                                    return fd;
+                                else
+                                    std::this_thread::sleep_for(50ms);
+                        }
+                    );
+                    // 阻塞直至目标共享内存对象存在:
+                    if (opening.wait_for(0.5s) == std::future_status::ready)
+                        return opening.get();
+                    else
+                        if (DEBUG)
+                            std::exit(0);
+                        else
+                            assert(!"shm obj 仍未被创建, 导致 reader 等待超时");
+                }
+            }(std::bind(shm_open, name.c_str(), creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY, 0666));
             assert(fd != -1);
 
             if constexpr (creat) {
@@ -204,7 +204,13 @@ class Shared_Memory {
             if (DEBUG) {
                 // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
                 for (auto byte : std::as_const(this->area))
-                    std::ignore = auto{byte};
+                    std::ignore =
+#ifdef __cpp_auto_cast
+                        auto{byte}
+#else
+                        decltype(byte){byte}
+#endif
+                    ;
 
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
             }
@@ -265,7 +271,14 @@ class Shared_Memory {
         }
 
         auto& get_name() const { return this->name; }
-        auto get_area(this auto& self) -> const auto& {
+        auto get_area(
+#ifndef __cpp_explicit_this_parameter
+        ) const -> const auto& {
+            auto& self = const_cast<Shared_Memory&>(*this);
+#else
+            this auto& self
+        ) -> const auto& {
+#endif
             if constexpr (!creat)
                 return self.area;
             else
@@ -279,10 +292,8 @@ class Shared_Memory {
          * 只要内存区域是由同一个 shm obj 映射而来 (即 同名), 就视为相等.
          */
         template <bool other_creat>
-        auto operator==(
-            this const auto& self, const Shared_Memory<other_creat>& other
-        ) {
-            return self.get_name() == other.get_name();
+        auto operator==(const Shared_Memory<other_creat>& other) const {
+            return this->get_name() == other.get_name();
         }
 
         /**
@@ -339,7 +350,14 @@ class Shared_Memory {
         }
 
         /* impl std::ranges::range for Self */
-        auto& operator[](this auto& self, const std::size_t i) {
+        auto& operator[](
+#ifndef __cpp_explicit_this_parameter
+            const std::size_t i) const {
+            auto& self = const_cast<Shared_Memory&>(*this);
+#else
+            this auto& self, const std::size_t i
+        ) {
+#endif
             assert(i < std::size(self));
             return *(std::begin(self) + i);
         }
@@ -355,11 +373,33 @@ class Shared_Memory {
         /**
          * 被映射的起始地址.
          */
-        auto data(this auto& self) {
+        auto data(
+#ifndef __cpp_explicit_this_parameter
+        ) { auto& self = *this;
+#else
+            this auto& self
+        ) {
+#endif
             return std::to_address(std::begin(self));
         }
-        auto begin(this auto& self) { return std::begin(self.get_area()); }
-        auto end(this auto& self) { return std::begin(self) + std::size(self); }
+        auto begin(
+#ifndef __cpp_explicit_this_parameter
+        ) { auto& self = *this;
+#else
+            this auto& self
+        ) {
+#endif
+            return std::begin(self.get_area());
+        }
+        auto end(
+#ifndef __cpp_explicit_this_parameter
+        ) { auto& self = *this;
+#else
+            this auto& self
+        ) {
+#endif
+            return std::begin(self) + std::size(self);
+        }
         /**
          * 映射的区域大小.
          */
@@ -707,7 +747,14 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
         }
 
-        auto get_resources(this auto&& self) -> decltype(auto) {
+        auto get_resources(
+#ifndef __cpp_explicit_this_parameter
+        ) const -> decltype(auto) {
+            auto&& self = std::move(const_cast<ShM_Resource&>(*this));
+#else
+            this auto&& self
+        ) -> decltype(auto) {
+#endif
             if constexpr (
                 std::disjunction<
                     std::is_lvalue_reference<decltype(self)>,

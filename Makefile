@@ -1,11 +1,12 @@
 SHELL = bash
-CXX = $(shell echo $${CXX:-g++}) -fdiagnostics-color=always -std=c++26
+CXX = $(shell echo $${CXX:-g++}) -fdiagnostics-color=always
 CXXDEBUG = -ggdb3  \
            -fvar-tracking -gcolumn-info -femit-class-debug-always  \
            -gstatement-frontiers -fno-eliminate-unused-debug-types  \
            -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
            -fno-eliminate-unused-debug-symbols -ftrapv -fsanitize=undefined
-CXXFLAGS = -O0 -fno-omit-frame-pointer  \
+CXXFLAGS = -std=c++26  \
+           -O0 -fno-omit-frame-pointer  \
            $(CXXDEBUG)  \
            -Wpedantic -Wall -W -fconcepts-diagnostics-depth=9 -fdiagnostics-all-candidates  \
            -Iinclude
@@ -28,7 +29,7 @@ run-build:  bin/release.exe
 .PHONY: try-backport
 try-backport:
 	read  &&  \
-	$(CXX) -std=c++$$REPLY -fpermissive -fconcepts -w -O0 -g0 -Iinclude $(LDFLAGS)  \
+	$(CXX) -std=c++$$REPLY -fpermissive -w -O0 -g0 -Iinclude $(LDFLAGS)  \
 	  -o bin/backport-$$REPLY.exe -D'NDEBUG'  src/main.cpp
 
 bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
