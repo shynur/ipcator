@@ -605,7 +605,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
 
             /* As A Comparator */
-            static bool operator()(const auto& a, const auto& b) noexcept {
+            bool operator()(const auto& a, const auto& b) const noexcept {
                 const auto pa = get_addr(a), pb = get_addr(b);
 
                 if constexpr (using_ordered_set)
@@ -614,7 +614,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                     return pa == pb;
             }
             /* As A Hasher */
-            static auto operator()(const auto& shm) noexcept {
+            auto operator()(const auto& shm) const noexcept {
                 const auto addr = get_addr(shm);
                 return std::hash<std::decay_t<decltype(addr)>>{}(addr);
             }
@@ -1053,13 +1053,13 @@ struct ShM_Reader {
             }
 
             /* Hash */
-            static auto operator()(const auto& shm) noexcept
+            auto operator()(const auto& shm) const noexcept
             -> std::size_t {
                 const auto name = get_name(shm);
                 return std::hash<std::decay_t<decltype(name)>>{}(name);
             }
             /* KeyEqual */
-            static bool operator()(const auto& a, const auto& b) noexcept {
+            bool operator()(const auto& a, const auto& b) const noexcept {
                 return get_name(a) == get_name(b);
             }
         };
