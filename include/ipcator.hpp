@@ -6,14 +6,20 @@
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
 # if __has_include(<format>)
-#   include <format>  // formatter, format_error, vformat{_to,}, make_format_args
+#   include <format>  // format, formatter, format_error, vformat{_to,}, make_format_args
 # elif __has_include(<experimental/format>)
 #   include <experimental/format>
-    namespace std { using experimental::format; }
+    namespace std {
+        using experimental::format,
+              experimental::formatter, experimental::format_error,
+              experimental::vformat, experimental::vformat_to,
+              experimental::make_format_args;
+    }
 # else
 #   include "fmt/core.h"
     namespace std {
-        using ::fmt::formatter, ::fmt::format_error,
+        using ::fmt::format,
+              ::fmt::formatter, ::fmt::format_error,
               ::fmt::vformat, ::fmt::vformat_to,
               ::fmt::make_format_args;
     }
@@ -28,7 +34,19 @@
 #include <random>  // mt19937, random_device, uniform_int_distribution
 #include <ranges>  // views::{chunk,transform,join_with,iota}
 #include <set>
-#include <source_location>  // source_location::current
+# if __has_include(<source_location>)
+#   include <source_location>  // source_location::current
+# else
+    namespace std {
+        namespace source_location {
+            struct current {
+                auto function_name() const {
+                    return "某函数";
+                }
+            };
+        }
+    }
+# endif
 #include <span>
 #include <string>
 #include <string_view>
@@ -503,19 +521,26 @@ inline auto operator""_shm [[gnu::always_inline]] (const char *const name, [[may
             auto&& rdwr_shm = Shared_Memory{name, size};
 
             if (size == 1) {
-                auto flag = std::atomic_ref{rdwr_shm[0]};
+                auto flag = std::atomic_ref{rdwr_shm.get_area()[0]};
                 flag.fetch_or(true, std::memory_order_release);
+#if __GNUC__ >= 14 || __clang_major__ >= 20
                 flag.notify_all();
+#endif
             }
 
-            return rdwr_shm;
+            return std::move(rdwr_shm);
         }
         inline auto operator+ [[gnu::always_inline]] () const {
             auto&& rdonly_shm = Shared_Memory{name};
 
             if (std::size(rdonly_shm.get_area()) == 1) {
-                auto flag = std::atomic_ref{rdonly_shm[0]};
+                auto flag = std::atomic_ref{rdonly_shm.get_area()[0]};
+#if __GNUC__ >= 14 || __clang_major__ >= 20
                 flag.wait(false, std::memory_order_acquire);
+#else
+                while (!flag.load())
+                    std::this_thread::sleep_for(10ms);
+#endif
             }
 
             return rdonly_shm;
@@ -706,7 +731,18 @@ class ShM_Resource: public std::pmr::memory_resource {
 #ifdef __cpp_lib_associative_heterogeneous_erasure
                 .template extract<const void *>((const void *)area)
 #else
-                .extract(this->resources.find((const void *)area))
+                .extract(
+                    std::find_if(
+                        this->resources.cbegin(), this->resources.cend(),
+                        [area=(const void *)area](const auto& shm) {
+                            if constexpr (using_ordered_set)
+                                return !ShM_As_Addr{}(shm, area) == !ShM_As_Addr{}(shm, area);
+                            else
+                                return ShM_As_Addr{}(shm) == ShM_As_Addr{}(area)
+                                       && ShM_As_Addr{}(shm, area);
+                        }
+                    )
+                )
 #endif
                 .value()
             );
@@ -1061,7 +1097,19 @@ struct ShM_Reader {
 #endif
         & {
             if (
-                const auto shm = this->cache.find(name);
+                const auto shm =
+#ifdef __cpp_lib_generic_unordered_lookup
+                    this->cache.find(name)
+#else
+                    std::find_if(
+                        this->cache.cbegin(), this->cache.cend(),
+                        [&](const auto& shm) {
+                            return ShM_As_Str{}(name) == ShM_As_Str{}(shm)
+                                   && ShM_As_Str{}(name, shm);
+                        }
+                    )
+#endif
+                ;
                 shm != std::cend(this->cache)
             )
                 return *shm;

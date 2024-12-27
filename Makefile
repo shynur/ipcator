@@ -10,7 +10,7 @@ CXXFLAGS = -std=c++26  \
            $(CXXDEBUG)  \
            -Wpedantic -Wall -W -fconcepts-diagnostics-depth=9 -fdiagnostics-all-candidates  \
            -Iinclude
-LDFLAGS = -lrt
+LDFLAGS = -lrt -pthread
 
 
 .PHONY: run

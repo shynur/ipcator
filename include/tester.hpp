@@ -149,10 +149,11 @@ struct Tester {
             // auto reader_b = reader_a;
         }
         const auto end = std::chrono::high_resolution_clock::now();
-
+#if __GNUC__ >= 14
         std::cout << "平均耗时: "
                   << std::chrono::duration_cast<std::chrono::microseconds>(end - start) / (double)times
                   << '\n';
+#endif
         pf.hr();
     }
     /**
@@ -221,10 +222,11 @@ struct Tester {
         }
         std::move(rs).get_resources().clear();
         const auto end = std::chrono::high_resolution_clock::now();
-
+#if __GNUC__ >= 14
         std::cout << "平均耗时: "
                   << std::chrono::duration_cast<std::chrono::microseconds>(end - start) / (double)times
                   << '\n';
+#endif
         pf.hr();
     }
     /**
@@ -247,10 +249,11 @@ struct Tester {
             rs.deallocate(rs.allocate(198), 198);
         //rs.release();
         const auto end = std::chrono::high_resolution_clock::now();
-
+#if __GNUC__ >= 14
         std::cout << "平均耗时: "
                   << std::chrono::duration_cast<std::chrono::microseconds>(end - start) / (double)times
                   << '\n';
+#endif
         pf.hr();
     }
     void mono_buffer() {
