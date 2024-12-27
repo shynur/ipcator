@@ -5,7 +5,19 @@
 #include <chrono>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
-#include <format>  // formatter, format_error, vformat{_to,}, make_format_args
+# if __has_include(<format>)
+#   include <format>  // formatter, format_error, vformat{_to,}, make_format_args
+# elif __has_include(<experimental/format>)
+#   include <experimental/format>
+    namespace std { using experimental::format; }
+# else
+#   include "fmt/core.h"
+    namespace std {
+        using ::fmt::formatter, ::fmt::format_error,
+              ::fmt::vformat, ::fmt::vformat_to,
+              ::fmt::make_format_args;
+    }
+# endif
 #include <functional>  // bind{_back,}, bit_or, plus
 #include <future>  // async, future_status::ready
 #include <iostream>  // clog
