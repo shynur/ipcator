@@ -89,10 +89,10 @@ namespace {
                         }
                     );
                     // 阻塞直至目标共享内存对象存在:
-                    if (opening.wait_for(0.5s) == std::future_status::ready)
+                    if (opening.wait_for(0.5s) == std::future_status::ready) [[likely]]
                         return opening.get();
                     else
-                        if (DEBUG)
+                        if constexpr (DEBUG)
                             std::exit(0);
                         else
                             assert(!"shm obj 仍未被创建, 导致 reader 等待超时");
@@ -178,7 +178,7 @@ class Shared_Memory {
             (unsigned char *)map_shm<creat>(name, size),
             size,
         } {
-            if (DEBUG) {
+            if constexpr (DEBUG) {
                 // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
                 for (auto& byte : this->area)
                     byte ^= byte;
@@ -201,7 +201,7 @@ class Shared_Memory {
                 };
             }()
         } {
-            if (DEBUG) {
+            if constexpr (DEBUG) {
                 // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
                 for (auto byte : std::as_const(this->area))
                     std::ignore =
@@ -266,7 +266,7 @@ class Shared_Memory {
                 std::size(this->area)
             );
 
-            if (DEBUG)
+            if constexpr (DEBUG)
                 std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m", *this) + '\n';
         }
 
@@ -735,7 +735,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             return *this;
         }
         ~ShM_Resource() {
-            if (DEBUG) {
+            if constexpr (DEBUG) {
                 // 显式删除以触发日志输出.
                 while (!std::empty(this->resources)) {
                     const auto& area = std::cbegin(this->resources)->get_area();
@@ -829,7 +829,7 @@ struct std::formatter<ShM_Resource<set_t>> {
                 std::string arr;
                 for (const auto& shm : resrc.get_resources())
                     arr += std::format("{}", shm) + ",\n";
-                arr.pop_back();
+                arr.pop_back(), arr.pop_back();
                 return arr;
             }()
 #endif
