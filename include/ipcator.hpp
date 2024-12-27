@@ -1,5 +1,4 @@
 #pragma once
-// #define NDEBUG
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint, atomic_thread_fence, memory_order_release, memory_order_acquire
 #include <cassert>
@@ -32,6 +31,8 @@
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
 #include <unistd.h>  // close, ftruncate, getpagesize
+
+
 using namespace std::literals;
 
 
@@ -70,7 +71,11 @@ namespace {
      */
     template <bool creat = false>
     constexpr auto map_shm = [](const auto resolve) consteval {
-        return [=] [[nodiscard]] (
+        return [=]
+#if __cplusplus >= 202302L
+            [[nodiscard]]
+#endif
+        (
             const std::string& name, const std::unsigned_integral auto... size
         ) requires (sizeof...(size) == creat) {
 
@@ -193,7 +198,11 @@ class Shared_Memory {
          */
         Shared_Memory(const std::string name) requires(!creat)
         : name{name}, area{
-            [&] -> decltype(this->area) {
+            [&]
+#if __cplusplus <= 202002L
+            ()
+#endif
+            -> decltype(this->area) {
                 const auto [addr, length] = map_shm<>(name);
                 return {
                     (const unsigned char *)addr,
@@ -375,7 +384,8 @@ class Shared_Memory {
          */
         auto data(
 #ifndef __cpp_explicit_this_parameter
-        ) { auto& self = *this;
+        ) const {
+            auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self
         ) {
@@ -384,7 +394,8 @@ class Shared_Memory {
         }
         auto begin(
 #ifndef __cpp_explicit_this_parameter
-        ) { auto& self = *this;
+        ) const {
+            auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self
         ) {
@@ -393,7 +404,8 @@ class Shared_Memory {
         }
         auto end(
 #ifndef __cpp_explicit_this_parameter
-        ) { auto& self = *this;
+        ) const {
+            auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self
         ) {
@@ -427,7 +439,11 @@ struct std::formatter<Shared_Memory<creat>> {
             return p;
     }
     auto format(const auto& shm, auto& context) const {
-        constexpr auto obj_constructor = [] consteval {
+        constexpr auto obj_constructor = []
+#if __cplusplus <= 202002L
+            ()
+#endif
+        consteval {
             if (creat)
                 return "Shared_Memory<creat=true>";
             else
@@ -571,7 +587,11 @@ auto operator""_shm(const unsigned long long size) {
 template <template <typename... T> class set_t = std::set>
 class ShM_Resource: public std::pmr::memory_resource {
     public:
-        static constexpr bool using_ordered_set = [] consteval {
+        static constexpr bool using_ordered_set = []
+#if __cplusplus <= 202002L
+            ()
+#endif
+        consteval {
             if (requires {
                 requires std::same_as<set_t<int>, std::set<int>>;
             })
@@ -651,7 +671,10 @@ class ShM_Resource: public std::pmr::memory_resource {
                 generate_shm_UUName(),
                 size
             );
-            assert(ok);  [[assume(ok)]];
+            assert(ok);
+#if __has_cpp_attribute(assume)
+            [[assume(ok)]];
+#endif
             if constexpr (!using_ordered_set)
                 this->last_inserted = &*inserted;
 
@@ -1032,7 +1055,10 @@ struct ShM_Reader {
                 return *shm;
             else {
                 const auto [inserted, ok] = this->cache.emplace(std::string{name});
-                assert(ok);  [[assume(ok)]];
+                assert(ok);
+#if __has_cpp_attribute(assume)
+            [[assume(ok)]];
+#endif
                 return *inserted;
             }
         }
