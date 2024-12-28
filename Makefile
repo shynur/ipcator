@@ -1,56 +1,54 @@
 SHELL = bash
-CXX = $(shell echo $${CXX:-g++}) -fdiagnostics-color=always
-CXXDEBUG = -ggdb3  \
+CXX = $(shell echo $${CXX:-g++}) -std=c++$(shell echo $${ISOCPP:-26}) -Iinclude
+DEBUG = $(shell if (: $${NDEBUG:?}); then :; else echo 1; fi)
+CXXDEBUG = -O0 -ggdb -g3  \
            -fvar-tracking -gcolumn-info -femit-class-debug-always  \
            -gstatement-frontiers -fno-eliminate-unused-debug-types  \
            -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
-           -fno-eliminate-unused-debug-symbols -ftrapv -fsanitize=undefined
-CXXFLAGS = -std=c++26  \
-           -O0 -fno-omit-frame-pointer  \
-           $(CXXDEBUG)  \
-           -Wpedantic -Wall -W -fconcepts-diagnostics-depth=9 -fdiagnostics-all-candidates  \
-           -Iinclude
+           -fno-eliminate-unused-debug-symbols -fno-omit-frame-pointer  \
+					 -ftrapv -fsanitize=undefined
+CXXDIAGNO = -fdiagnostics-path-format=inline-events  \
+            -fconcepts-diagnostics-depth=99  \
+            -fdiagnostics-all-candidates
+CXXFLAGS = -Wpedantic -Wall -W  \
+					 $(if $(DEBUG), $(CXXDEBUG), -g0 -Ofast -D'NDEBUG')  \
+					 $(if $(DEBUG), $(CXXDIAGNO))
 LDFLAGS = -lrt -pthread
 
+# ----------------------------------------------------------
 
-.PHONY: run
-run:  bin/debug.exe
-	rm -f /dev/shm/github_dot_com_slash_shynur_slash_ipcator-?*
+.PHONY: test
+test:  bin/test.exe
+	rm -f /dev/shm/*ipcator-?*
 	@time $<
-	echo $$?
 
-.PHONY: run-build
-run-build:  bin/release.exe
-	rm -f /dev/shm/github_dot_com_slash_shynur_slash_ipcator-?*
-	@time $<
-	echo $$?
+.PHONY: ipc
+ipc:  bin/ipc-writer.exe  bin/ipc-reader.exe
+	rm -f /dev/shm/*ipcator-?*
+	echo
+	@for exe in $^; do (./$$exe; echo) & done
+	@wait
 
-# Usage:  echo 20 | make try-backport
-.PHONY: try-backport
-try-backport:
-	read  &&  \
-	$(CXX) -std=c++$$REPLY -fpermissive -w -O0 -g0 -Iinclude $(LDFLAGS)  \
-	  -o bin/backport-$$REPLY.exe -D'NDEBUG'  src/main.cpp
 
-bin/debug.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
-	@mkdir -p bin
+bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp
+	mkdir -p bin
 	mkdir -p /tmp/shynur/ipcator/;  \
-	if time $(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@  $<  \
+	if time  \
+	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $(LDFLAGS) -o $@  $<  \
     2> /tmp/shynur/ipcator/Makefile.stderr; then  \
 		:;  \
 	else  \
 		LASTEXITCODE=$$?;  \
 		cat /tmp/shynur/ipcator/Makefile.stderr  \
-		| sed -e 's/warning/🤣👉/g' -e 's/error/🤡/g';  \
+		| sed -e 's/warning:/😎👌:/g' -e 's/error:/😭👊:/g';  \
 		(exit $$LASTEXITCODE);  \
 	fi
-	@echo '************************** 编译完成 **************************'
 
-bin/release.exe:  src/main.cpp  include/ipcator.hpp  include/tester.hpp
-	@mkdir -p bin
-	time $(CXX) -g0 -Ofast -w -Iinclude $(LDFLAGS) -o $@ -D'NDEBUG'  $<
-	@echo '************************** 编译完成 **************************'
+bin/ipc-%.exe:  src/ipc-%.cpp  include/ipcator.hpp
+	mkdir -p bin
+	time $(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@  $<
 
+# ----------------------------------------------------------
 
 .PHONY: git
 git:
@@ -60,20 +58,4 @@ git:
 .PHONY: clean
 clean:
 	rm -rf bin/
-
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-.PHONY: ipc
-ipc: bin/writer.exe bin/reader.exe
-	rm -f /dev/shm/{ipcator,github_dot_com_slash_shynur_slash_ipcator}-?*
-	@echo
-	@for exe in $^; do ($$exe; echo) & done
-	@wait
-	@echo
-
-bin/writer.exe: src/writer.cpp  include/ipcator.hpp
-	@mkdir -p bin
-	time $(CXX) $(CXXFLAGS) -Iinclude $(LDFLAGS) -o $@  $<
-
-bin/reader.exe: src/reader.cpp  include/ipcator.hpp
-	@mkdir -p bin
-	time $(CXX) $(CXXFLAGS) -Iinclude $(LDFLAGS) -o $@  $<
+	rm -f /dev/shm/*ipcator-?*
