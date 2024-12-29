@@ -16,12 +16,21 @@
               experimental::make_format_args;
     }
 # else
-#   include "fmt/core.h"
+#   include "fmt/format.h"
     namespace std {
-        using ::fmt::format,
-              ::fmt::formatter, ::fmt::format_error,
-              ::fmt::vformat, ::fmt::vformat_to,
-              ::fmt::make_format_args;
+        namespace experimental {
+            // 不实际使用, 只是为了能获得正确的 IDE 提示.
+            using ::fmt::format,
+                  ::fmt::formatter, ::fmt::format_error,
+                  ::fmt::vformat, ::fmt::vformat_to,
+                  ::fmt::make_format_args;
+        }
+        auto format(const auto& ...) { return "缺少 <format> 库"s; }
+        template <typename> struct formatter;
+        struct format_error: runtime_error { format_error(const auto& ...) {} };
+        auto vformat(const auto& ...) { return "缺少 <format> 库"s; }
+        auto vformat_to(const auto& iter, ...) { return iter; }
+        auto make_format_args(const auto& ...) { return "匿名的返回类型"; }
     }
 # endif
 #include <functional>  // bind{_back,}, bit_or, plus
@@ -563,10 +572,24 @@ namespace {
 
         // 在 shm obj 的名字中包含一个顺序递增的计数字段:
         constinit static std::atomic_uint cnt;
-        const auto base_name = std::format(
-            "{}-{:06}", prefix,
-            1 + cnt.fetch_add(1, std::memory_order_relaxed)
-        );
+        const auto base_name =
+#ifdef __cpp_lib_format
+            std::format(
+                "{}-{:06}", prefix,
+                1 + cnt.fetch_add(1, std::memory_order_relaxed)
+            )
+#else
+            prefix + "-"s
+            + [&] {
+                auto seq_id = std::to_string(
+                    1 + cnt.fetch_add(1, std::memory_order_relaxed)
+                );
+                while (seq_id.length() != 6)
+                    seq_id.insert(seq_id.cbegin(), '0');
+                return seq_id;
+            }()
+#endif
+        ;
 
         // 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
         // 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
@@ -745,7 +768,9 @@ class ShM_Resource: public std::pmr::memory_resource {
                 )
 #endif
                 .value()
-            );
+            );std::cerr<<size<<' '
+              <<whatcanisay_shm_out.get_area().size()<<' '
+              <<ceil_to_page_size(size)<< '\n';
             assert(
                 size <= std::size(whatcanisay_shm_out.get_area())
                 && std::size(whatcanisay_shm_out.get_area()) <= ceil_to_page_size(size)

@@ -1,5 +1,6 @@
 SHELL = bash
 CXX = $(shell echo $${CXX:-g++}) -std=c++$(shell echo $${ISOCPP:-26}) -Iinclude
+
 DEBUG = $(shell if (: $${NDEBUG:?}); then :; else echo 1; fi)
 CXXDEBUG = -O0 -ggdb -g3  \
            -fvar-tracking -gcolumn-info -femit-class-debug-always  \
@@ -9,11 +10,12 @@ CXXDEBUG = -O0 -ggdb -g3  \
            -ftrapv -fsanitize=undefined
 CXXDIAGNO = -fdiagnostics-path-format=inline-events  \
             -fconcepts-diagnostics-depth=99  \
-            $(intcmp $(shell $(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $3}' | awk -F. '{print $1}'), 14, , -fdiagnostics-all-candidates)
+            $(intcmp $(shell $(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $$3}' | awk -F. '{print $$1}'), 14, , -fdiagnostics-all-candidates)
 CXXFLAGS = -Wpedantic -Wall -W  \
            $(if $(DEBUG), $(CXXDEBUG), -g0 -Ofast -D'NDEBUG')  \
            $(if $(DEBUG), $(CXXDIAGNO))
-LDFLAGS = -lrt -pthread
+
+LDFLAGS = -pthread -lrt
 
 # ----------------------------------------------------------
 
@@ -34,8 +36,8 @@ bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp
 	mkdir -p bin
 	mkdir -p /tmp/shynur/ipcator/;  \
 	if time  \
-	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $(LDFLAGS) -o $@  $<  \
-    2> /tmp/shynur/ipcator/Makefile.stderr; then  \
+	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $(LDFLAGS) -o $@  \
+		$<  2> /tmp/shynur/ipcator/Makefile.stderr; then  \
 		:;  \
 	else  \
 		LASTEXITCODE=$$?;  \
