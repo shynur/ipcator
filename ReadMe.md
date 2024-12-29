@@ -1,18 +1,37 @@
-试运行:
+## 试运行
+
+### 在单个进程中测试
 
 ```bash
-make run  # 默认使用尽可能新的 C++ 特性
+make test
 # 或
-make run-build  # 更好的性能, 更少的日志
-# 或
-echo 20 | make try-backport  # 仅编译, 测试 C++20 兼容性
-echo 23 | make try-backport  # 同上, 测试 C++23
+make clean; NDEBUG=1 make test  # 更好的性能, 更少的日志
 ```
+
+### 测试双进程间的通信
 
 ```bash
-make ipc  # 测试进程间通信
+make ipc
+# 或
+make clean; NDEBUG=1 make ipc
 ```
 
-见 [用法示例](./include/tester.hpp).
+### 兼容性测试
 
-使用 C++20 编译时, 无法实现所有语义 (例如封装性与 const 方法的重载).
+默认使用 `g++` 编译, 标准为 C++26.
+但是可以:
+
+```bash
+export CXX=clang++-20  # 替换编译器为 LLVM Clang
+export ISOCPP=20  # 使用 C++20
+export NDEBUG=1  # 如果不使用 GCC, 那么这一步是必须的!
+make clean; make test ipc
+```
+
+## 用法示例
+
+见 <./include/tester.hpp>.
+
+## 注意事项
+
+降级 `$ISOCPP` 编译时, **无法实现所有语义** (例如封装性与 const 方法的重载).

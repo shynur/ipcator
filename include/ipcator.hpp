@@ -5,7 +5,34 @@
 #include <chrono>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
-#include <format>  // formatter, format_error, vformat{_to,}, make_format_args
+# if __has_include(<format>)
+#   include <format>  // format, formatter, format_error, vformat{_to,}, make_format_args
+# elif __has_include(<experimental/format>)
+#   include <experimental/format>
+    namespace std {
+        using experimental::format,
+              experimental::formatter, experimental::format_error,
+              experimental::vformat, experimental::vformat_to,
+              experimental::make_format_args;
+    }
+# else
+#   include "fmt/format.h"
+    namespace std {
+        namespace experimental {
+            // 不实际使用, 只是为了能获得正确的 IDE 提示.
+            using ::fmt::format,
+                  ::fmt::formatter, ::fmt::format_error,
+                  ::fmt::vformat, ::fmt::vformat_to,
+                  ::fmt::make_format_args;
+        }
+        auto format(const auto& ...) { return "缺少 <format> 库"s; }
+        template <typename> struct formatter;
+        struct format_error: runtime_error { format_error(const auto& ...) {} };
+        auto vformat(const auto& ...) { return "缺少 <format> 库"s; }
+        auto vformat_to(const auto& iter, ...) { return iter; }
+        auto make_format_args(const auto& ...) { return "匿名的返回类型"; }
+    }
+# endif
 #include <functional>  // bind{_back,}, bit_or, plus
 #include <future>  // async, future_status::ready
 #include <iostream>  // clog
@@ -16,7 +43,17 @@
 #include <random>  // mt19937, random_device, uniform_int_distribution
 #include <ranges>  // views::{chunk,transform,join_with,iota}
 #include <set>
-#include <source_location>  // source_location::current
+# if __has_include(<source_location>)
+#   include <source_location>  // source_location::current
+# else
+    namespace std {
+        namespace source_location {
+            struct current {
+                auto function_name() const { return "某函数"; }
+            };
+        }
+    }
+# endif
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,9 +76,9 @@ using namespace std::literals;
 namespace {
     constexpr auto DEBUG =
 #ifdef NDEBUG
-            false
+        false
 #else
-            true
+        true
 #endif
     ;
 }
@@ -111,7 +148,7 @@ namespace {
                     fd,
                     size...
 #ifdef __cpp_pack_indexing
-                            [0]
+                           [0]
 #endif
                 );
                 assert(result_resize != -1);
@@ -200,7 +237,7 @@ class Shared_Memory {
         : name{name}, area{
             [&]
 #if __cplusplus <= 202002L
-            ()
+               ()
 #endif
             -> decltype(this->area) {
                 const auto [addr, length] = map_shm<>(name);
@@ -361,7 +398,8 @@ class Shared_Memory {
         /* impl std::ranges::range for Self */
         auto& operator[](
 #ifndef __cpp_explicit_this_parameter
-            const std::size_t i) const {
+            const std::size_t i
+        ) const {
             auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self, const std::size_t i
@@ -487,23 +525,30 @@ auto operator""_shm(const unsigned long long size);
 inline auto operator""_shm [[gnu::always_inline]] (const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
         const char *const name;
-        inline auto operator[] [[gnu::always_inline]] (const std::size_t size) const {
+        auto operator[] [[gnu::always_inline]] (const std::size_t size) const {
             auto&& rdwr_shm = Shared_Memory{name, size};
 
             if (size == 1) {
-                auto flag = std::atomic_ref{rdwr_shm[0]};
+                auto flag = std::atomic_ref{rdwr_shm.get_area()[0]};
                 flag.fetch_or(true, std::memory_order_release);
+#if _GLIBCXX_RELEASE >= 14
                 flag.notify_all();
+#endif
             }
 
-            return rdwr_shm;
+            return std::move(rdwr_shm);
         }
-        inline auto operator+ [[gnu::always_inline]] () const {
+        auto operator+ [[gnu::always_inline]] () const {
             auto&& rdonly_shm = Shared_Memory{name};
 
             if (std::size(rdonly_shm.get_area()) == 1) {
-                auto flag = std::atomic_ref{rdonly_shm[0]};
+                auto flag = std::atomic_ref{rdonly_shm.get_area()[0]};
+#if _GLIBCXX_RELEASE >= 14
                 flag.wait(false, std::memory_order_acquire);
+#else
+                while (!flag.load())
+                    std::this_thread::sleep_for(10ms);
+#endif
             }
 
             return rdonly_shm;
@@ -527,10 +572,24 @@ namespace {
 
         // 在 shm obj 的名字中包含一个顺序递增的计数字段:
         constinit static std::atomic_uint cnt;
-        const auto base_name = std::format(
-            "{}-{:06}", prefix,
-            1 + cnt.fetch_add(1, std::memory_order_relaxed)
-        );
+        const auto base_name =
+#ifdef __cpp_lib_format
+            std::format(
+                "{}-{:06}", prefix,
+                1 + cnt.fetch_add(1, std::memory_order_relaxed)
+            )
+#else
+            prefix + "-"s
+            + [&] {
+                auto seq_id = std::to_string(
+                    1 + cnt.fetch_add(1, std::memory_order_relaxed)
+                );
+                while (seq_id.length() != 6)
+                    seq_id.insert(seq_id.cbegin(), '0');
+                return seq_id;
+            }()
+#endif
+        ;
 
         // 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
         // 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
@@ -592,14 +651,14 @@ class ShM_Resource: public std::pmr::memory_resource {
             ()
 #endif
         consteval {
-            if (requires {
+            if constexpr (requires {
                 requires std::same_as<set_t<int>, std::set<int>>;
             })
                 return true;
-            else if (std::is_same_v<set_t<int>, std::unordered_set<int>>)
+            else if constexpr (std::is_same_v<set_t<int>, std::unordered_set<int>>)
                 return false;
             else {
-#ifndef __GNUG__  // GCC 未修复 CWG2518.
+#if __GNUC__ >= 14
                 static_assert(false, "只接受 ‘std::{,unordered_}set’ 作为注册表格式.");
 #elifdef __cpp_lib_unreachable
                 std::unreachable();
@@ -634,7 +693,8 @@ class ShM_Resource: public std::pmr::memory_resource {
                     return pa == pb;
             }
             /* As A Hasher */
-            auto operator()(const auto& shm) const noexcept {
+            auto operator()(const auto& shm) const noexcept
+            -> std::size_t {
                 const auto addr = get_addr(shm);
                 return std::hash<std::decay_t<decltype(addr)>>{}(addr);
             }
@@ -694,10 +754,23 @@ class ShM_Resource: public std::pmr::memory_resource {
 #ifdef __cpp_lib_associative_heterogeneous_erasure
                 .template extract<const void *>((const void *)area)
 #else
-                .extract(this->resources.find((const void *)area))
+                .extract(
+                    std::find_if(
+                        this->resources.cbegin(), this->resources.cend(),
+                        [area=(const void *)area](const auto& shm) {
+                            if constexpr (using_ordered_set)
+                                return !ShM_As_Addr{}(shm, area) == !ShM_As_Addr{}(area, shm);
+                            else
+                                return ShM_As_Addr{}(shm) == ShM_As_Addr{}(area)
+                                       && ShM_As_Addr{}(shm, area);
+                        }
+                    )
+                )
 #endif
                 .value()
-            );
+            );std::cerr<<size<<' '
+              <<whatcanisay_shm_out.get_area().size()<<' '
+              <<ceil_to_page_size(size)<< '\n';
             assert(
                 size <= std::size(whatcanisay_shm_out.get_area())
                 && std::size(whatcanisay_shm_out.get_area()) <= ceil_to_page_size(size)
@@ -720,14 +793,12 @@ class ShM_Resource: public std::pmr::memory_resource {
                 this->last_inserted = std::move(other.last_inserted);
         }
 
-#if __GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0  \
-    || __clang_major__ == 20 && __clang_minor__ == 0 && __clang_patchlevel__ == 0
+#if !(__GNUC__ == 14 && __GNUC_MINOR__ == 2)
         friend class ShM_Resource<std::set>;  // see below:
 #endif
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
         : resources{[
-#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)  \
-    && !(__clang_major__ == 20 && __clang_minor__ == 0 && __clang_patchlevel__ == 0)
+#if __GNUC__ == 14 && __GNUC_MINOR__ == 2
             other_resources=std::move(other).get_resources()
 #else
             &other_resources=other.resources
@@ -1041,15 +1112,26 @@ struct ShM_Reader {
         }
 
         auto select_shm(const std::string_view name) -> const
-#if !(__GNUC__ == 15 && __GNUC_MINOR__ == 0 && __GNUC_PATCHLEVEL__ == 0)  \
-    && !(__clang_major__ == 20 && __clang_minor__ == 0 && __clang_patchlevel__ == 0)
+#if __GNUC__ == 14 && __GNUC_MINOR__ == 2
             auto
 #else
             Shared_Memory<false>
 #endif
         & {
             if (
-                const auto shm = this->cache.find(name);
+                const auto shm =
+#ifdef __cpp_lib_generic_unordered_lookup
+                    this->cache.find(name)
+#else
+                    std::find_if(
+                        this->cache.cbegin(), this->cache.cend(),
+                        [&](const auto& shm) {
+                            return ShM_As_Str{}(name) == ShM_As_Str{}(shm)
+                                   && ShM_As_Str{}(name, shm);
+                        }
+                    )
+#endif
+                ;
                 shm != std::cend(this->cache)
             )
                 return *shm;
@@ -1057,7 +1139,7 @@ struct ShM_Reader {
                 const auto [inserted, ok] = this->cache.emplace(std::string{name});
                 assert(ok);
 #if __has_cpp_attribute(assume)
-            [[assume(ok)]];
+                [[assume(ok)]];
 #endif
                 return *inserted;
             }
