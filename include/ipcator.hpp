@@ -52,7 +52,7 @@
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>
-#include <utility>  // as_const, move, swap, hash, exchange, declval
+#include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
 #include <variant>  // monostate
 #include <version>
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
@@ -513,7 +513,7 @@ auto operator""_shm(const unsigned long long size);
  * - ‘+"/name"_shm’ 将命名的 shm obj 以只读模式映射至本地.
  * 当 ‘size=1’ 时, 这两种操作成为进程间的同步机制.
  */
-auto operator""_shm [[gnu::always_inline]] (const char *const name, [[maybe_unused]] std::size_t) {
+inline auto operator""_shm [[gnu::always_inline]] (const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
         const char *const name;
         auto operator[] [[gnu::always_inline]] (const std::size_t size) const {
@@ -634,8 +634,16 @@ class ShM_Resource: public std::pmr::memory_resource {
                 return true;
             else if constexpr (std::is_same_v<set_t<int>, std::unordered_set<int>>)
                 return false;
-            else
+            else {
+#if __GNUC__ >= 14
                 static_assert(false, "只接受 ‘std::{,unordered_}set’ 作为注册表格式.");
+#elifdef __cpp_lib_unreachable
+                std::unreachable();
+#else
+                assert(false);
+                return bool{};
+#endif
+            }
         }();
     private:
         struct ShM_As_Addr {

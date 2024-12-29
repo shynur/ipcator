@@ -6,13 +6,13 @@ CXXDEBUG = -O0 -ggdb -g3  \
            -gstatement-frontiers -fno-eliminate-unused-debug-types  \
            -fno-merge-debug-strings -ginline-points -gdescribe-dies  \
            -fno-eliminate-unused-debug-symbols -fno-omit-frame-pointer  \
-					 -ftrapv -fsanitize=undefined
+           -ftrapv -fsanitize=undefined
 CXXDIAGNO = -fdiagnostics-path-format=inline-events  \
             -fconcepts-diagnostics-depth=99  \
-            -fdiagnostics-all-candidates
+            $(intcmp $(shell $(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $3}' | awk -F. '{print $1}'), 14, , -fdiagnostics-all-candidates)
 CXXFLAGS = -Wpedantic -Wall -W  \
-					 $(if $(DEBUG), $(CXXDEBUG), -g0 -Ofast -D'NDEBUG')  \
-					 $(if $(DEBUG), $(CXXDIAGNO))
+           $(if $(DEBUG), $(CXXDEBUG), -g0 -Ofast -D'NDEBUG')  \
+           $(if $(DEBUG), $(CXXDIAGNO))
 LDFLAGS = -lrt -pthread
 
 # ----------------------------------------------------------
