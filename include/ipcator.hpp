@@ -759,7 +759,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                         this->resources.cbegin(), this->resources.cend(),
                         [area=(const void *)area](const auto& shm) {
                             if constexpr (using_ordered_set)
-                                return !ShM_As_Addr{}(shm, area) == !ShM_As_Addr{}(shm, area);
+                                return !ShM_As_Addr{}(shm, area) == !ShM_As_Addr{}(area, shm);
                             else
                                 return ShM_As_Addr{}(shm) == ShM_As_Addr{}(area)
                                        && ShM_As_Addr{}(shm, area);
