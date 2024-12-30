@@ -71,7 +71,7 @@ export CXX=clang++-20  # 替换编译器为 LLVM Clang
 export ISOCPP=20  # 使用 C++20
 export NDEBUG=1  # 如果不使用 GCC, 那么这一步是必须的!
 # 这 ^^^^^^^^^^^ 会排除许多 GCC 专属而 Clang 无法识别的 debug 选项.
-make clean; make test ipc
+make clean; rm -rf lib/?*-build/; make test ipc
 ```
 
 ## 用法

@@ -25,7 +25,7 @@ LIBS = $(if $(shell  \
             echo $$'%:if __has_include(<format>)\n%:else\n%:if __has_include(<experimental/format>)\n%:else\n"cannot find <format>";\n%:endif\n%:endif'  \
             | $(CXX) -x c++ -E - | grep 'cannot find <format>' -  \
          ),fmt)
-LIBDIRS = $(if $(LIBS), ./lib/$(LIBS)-build/)
+LIBDIRS = $(if $(LIBS),./lib/$(LIBS)-build/)
 LIBFLAGS = $(if $(LIBS), -L$(LIBDIRS))
 LDFLAGS = -pthread -lrt $(if $(LIBS), -l$(LIBS))
 
@@ -81,6 +81,7 @@ git:
 clean:
 	rm -rf bin/
 	rm -f /dev/shm/*ipcator-?*
+	@# 默认保留依赖库的二进制文件, 因为生成一次耗时太久.
 	for lib in $(LIBS); do  \
 	  mv lib/$$lib-build/lib$$lib.a lib/;  \
 	  rm -rf lib/$$lib-build/*;  \
@@ -95,4 +96,5 @@ print-vars:
 	@echo CXXFLAGS = $(CXXFLAGS)
 	@echo LIBS = $(LIBS)
 	@echo LIBDIRS = $(LIBDIRS)
+	@echo LIBFLAGS = $(LIBFLAGS)
 	@echo LDFLAGS = $(LDFLAGS)
