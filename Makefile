@@ -11,18 +11,23 @@ CXXDEBUG = -O0 -ggdb -g3  \
 CXXDIAGNO = -fdiagnostics-path-format=inline-events  \
             -fconcepts-diagnostics-depth=99  \
             $(intcmp $(shell  \
-						         $(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $$3}' | awk -F. '{print $$1}'  \
-							), 14, , -fdiagnostics-all-candidates)
+                     $(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $$3}' | awk -F. '{print $$1}'  \
+              ), 13,  \
+               , , -fdiagnostics-all-candidates)  \
+            $(if  \
+              $(shell if ((`$(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $$3}' | awk -F. '{print $$1}'`>=14)); then echo 1; fi),  \
+              -fdiagnostics-all-candidates)
 CXXFLAGS = -Wpedantic -Wall -W  \
-           $(if $(DEBUG), $(CXXDEBUG), -g0 -Ofast -D'NDEBUG')  \
-           $(if $(DEBUG), $(CXXDIAGNO))
+           $(if $(DEBUG), $(CXXDIAGNO))  \
+           $(if $(DEBUG), $(CXXDEBUG), -g0 -O3 -D'NDEBUG')
 
 LIBS = $(if $(shell  \
-            echo $$'\#if!__has_include(<format>)&&!__has_include(<experimental/format>)\n"cannot find <format>";\n\#endif'  \
-				    | $(CXX) -x c++ -E - | grep 'cannot find <format>' -  \
-				 ),fmt)
-LIBDIRS = ./lib/$(LIBS)-build/
-LDFLAGS = -pthread -lrt -l$(LIBS)
+            echo $$'%:if __has_include(<format>)\n%:else\n%:if __has_include(<experimental/format>)\n%:else\n"cannot find <format>";\n%:endif\n%:endif'  \
+            | $(CXX) -x c++ -E - | grep 'cannot find <format>' -  \
+         ),fmt)
+LIBDIRS = $(if $(LIBS), ./lib/$(LIBS)-build/)
+LIBFLAGS = $(if $(LIBS), -L$(LIBDIRS))
+LDFLAGS = -pthread -lrt $(if $(LIBS), -l$(LIBS))
 
 # ----------------------------------------------------------
 
@@ -39,11 +44,11 @@ ipc:  bin/ipc-writer.exe  bin/ipc-reader.exe
 	@wait
 
 
-bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  lib/$(LIBS)-build/
+bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  $(LIBDIRS)
 	mkdir -p bin
 	mkdir -p /tmp/shynur/ipcator/;  \
 	if time  \
-	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $< -L$(LIBDIRS) $(LDFLAGS) -o $@  \
+	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $< $(LIBFLAGS) $(LDFLAGS) -o $@  \
 		2> /tmp/shynur/ipcator/Makefile.stderr; then  \
 		:;  \
 	else  \
@@ -53,9 +58,9 @@ bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  lib/$(LIBS
 		(exit $$LASTEXITCODE);  \
 	fi
 
-bin/ipc-%.exe:  src/ipc-%.cpp  include/ipcator.hpp  lib/$(LIBS)-build/
+bin/ipc-%.exe:  src/ipc-%.cpp  include/ipcator.hpp  $(LIBDIRS)
 	mkdir -p bin
-	time $(CXX) $(CXXFLAGS) $< -L$(LIBDIRS) $(LDFLAGS) -o $@
+	time $(CXX) $(CXXFLAGS) $< $(LIBFLAGS) $(LDFLAGS) -o $@
 
 
 lib/fmt-build/:  lib/fmt-build/libfmt.a
@@ -63,7 +68,7 @@ lib/fmt-build/libfmt.a:
 	mkdir -p lib/fmt-build
 	cd lib/fmt-build;  \
 	CXX='$(CXX)' cmake ../fmt;  \
-	make -j$$((1+`nproc`))
+	make -j$$[1+`nproc`]
 
 # ----------------------------------------------------------
 
