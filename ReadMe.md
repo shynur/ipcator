@@ -5,7 +5,9 @@
 ## 下载
 
 ```bash
-git clone git@github.com:shynur/ipcator.git
+git clone -b master --single-branch git@github.com:shynur/ipcator.git
+(cd ipcator
+ git checkout `git tag --sort=-creatordate | head -n 1`)
 ```
 
 ### 工具链要求
