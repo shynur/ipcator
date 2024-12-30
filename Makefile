@@ -15,7 +15,9 @@ CXXFLAGS = -Wpedantic -Wall -W  \
            $(if $(DEBUG), $(CXXDEBUG), -g0 -Ofast -D'NDEBUG')  \
            $(if $(DEBUG), $(CXXDIAGNO))
 
-LDFLAGS = -pthread -lrt
+LIBS = fmt
+LIBDIRS = ./lib/$(LIBS)-build/
+LDFLAGS = -pthread -lrt -l$(LIBS)
 
 # ----------------------------------------------------------
 
@@ -32,12 +34,12 @@ ipc:  bin/ipc-writer.exe  bin/ipc-reader.exe
 	@wait
 
 
-bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp
+bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  lib/$(LIBS)-build/
 	mkdir -p bin
 	mkdir -p /tmp/shynur/ipcator/;  \
 	if time  \
-	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $(LDFLAGS) -o $@  \
-		$<  2> /tmp/shynur/ipcator/Makefile.stderr; then  \
+	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $< -L$(LIBDIRS) $(LDFLAGS) -o $@  \
+		2> /tmp/shynur/ipcator/Makefile.stderr; then  \
 		:;  \
 	else  \
 		LASTEXITCODE=$$?;  \
@@ -46,10 +48,17 @@ bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp
 		(exit $$LASTEXITCODE);  \
 	fi
 
-bin/ipc-%.exe:  src/ipc-%.cpp  include/ipcator.hpp
+bin/ipc-%.exe:  src/ipc-%.cpp  include/ipcator.hpp  lib/$(LIBS)-build/
 	mkdir -p bin
-	time $(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@  $<
+	time $(CXX) $(CXXFLAGS) $< -L$(LIBDIRS) $(LDFLAGS) -o $@
 
+
+lib/fmt-build/:  lib/fmt-build/libfmt.a
+lib/fmt-build/libfmt.a:
+	mkdir -p lib/fmt-build
+	cd lib/fmt-build;  \
+	CXX='$(CXX)' cmake ../fmt;  \
+	make -j$$((1+`nproc`))
 # ----------------------------------------------------------
 
 .PHONY: git
@@ -61,3 +70,4 @@ git:
 clean:
 	rm -rf bin/
 	rm -f /dev/shm/*ipcator-?*
+	rm -rf lib/?*-build/

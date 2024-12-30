@@ -1,3 +1,16 @@
+## 下载
+
+```bash
+git clone git@github.com:shynur/ipcator.git
+```
+
+如果缺少 `<format>` 库 (例如在某些 C++ 编译器版本过低的机器上), 额外执行:
+
+```bash
+git submodule init lib/fmt
+git submodule update lib/fmt
+```
+
 ## 试运行
 
 ### 在单个进程中测试

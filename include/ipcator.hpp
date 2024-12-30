@@ -18,19 +18,10 @@
 # else
 #   include "fmt/format.h"
     namespace std {
-        namespace experimental {
-            // 不实际使用, 只是为了能获得正确的 IDE 提示.
-            using ::fmt::format,
-                  ::fmt::formatter, ::fmt::format_error,
-                  ::fmt::vformat, ::fmt::vformat_to,
-                  ::fmt::make_format_args;
-        }
-        auto format(const auto& ...) { return "缺少 <format> 库"s; }
-        template <typename> struct formatter;
-        struct format_error: runtime_error { format_error(const auto& ...) {} };
-        auto vformat(const auto& ...) { return "缺少 <format> 库"s; }
-        auto vformat_to(const auto& iter, ...) { return iter; }
-        auto make_format_args(const auto& ...) { return "匿名的返回类型"; }
+        using ::fmt::format,
+              ::fmt::formatter, ::fmt::format_error,
+              ::fmt::vformat, ::fmt::vformat_to,
+              ::fmt::make_format_args;
     }
 # endif
 #include <functional>  // bind{_back,}, bit_or, plus
