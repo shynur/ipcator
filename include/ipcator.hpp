@@ -36,13 +36,20 @@
 #include <set>
 # if __has_include(<source_location>)
 #   include <source_location>  // source_location::current
+# elif __has_include(<experimental/source_location>)
+#   include <experimental/source_location>
+    namespace std { using typename experimental::source_location; }
 # else
+#   warning "连 <source_location> 都没有, 虽然我给你打了个补丁, 但还是建议你退群"
     namespace std {
-        namespace source_location {
-            struct current {
-                auto function_name() const { return "某函数"; }
-            };
-        }
+        struct source_location {
+            static consteval auto current() noexcept {
+                return source_location{};
+            }
+            constexpr auto function_name() const noexcept {
+                return "某函数";
+            }
+        };
     }
 # endif
 #include <span>
@@ -759,9 +766,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 )
 #endif
                 .value()
-            );std::cerr<<size<<' '
-              <<whatcanisay_shm_out.get_area().size()<<' '
-              <<ceil_to_page_size(size)<< '\n';
+            );
             assert(
                 size <= std::size(whatcanisay_shm_out.get_area())
                 && std::size(whatcanisay_shm_out.get_area()) <= ceil_to_page_size(size)

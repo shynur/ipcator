@@ -1,7 +1,7 @@
 SHELL = bash
 CXX = $(shell echo $${CXX:-g++}) -std=c++$(shell echo $${ISOCPP:-26}) -Iinclude
 
-DEBUG = $(shell if (: $${NDEBUG:?}); then :; else echo 1; fi)
+DEBUG = $(shell if (: $${NDEBUG:?}) 2> /dev/null; then :; else echo 1; fi)
 CXXDEBUG = -O0 -ggdb -g3  \
            -fvar-tracking -gcolumn-info -femit-class-debug-always  \
            -gstatement-frontiers -fno-eliminate-unused-debug-types  \
@@ -10,12 +10,17 @@ CXXDEBUG = -O0 -ggdb -g3  \
            -ftrapv -fsanitize=undefined
 CXXDIAGNO = -fdiagnostics-path-format=inline-events  \
             -fconcepts-diagnostics-depth=99  \
-            $(intcmp $(shell $(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $$3}' | awk -F. '{print $$1}'), 14, , -fdiagnostics-all-candidates)
+            $(intcmp $(shell  \
+						         $(CXX) -v |& grep '^gcc version' - | awk -F' ' '{printf $$3}' | awk -F. '{print $$1}'  \
+							), 14, , -fdiagnostics-all-candidates)
 CXXFLAGS = -Wpedantic -Wall -W  \
            $(if $(DEBUG), $(CXXDEBUG), -g0 -Ofast -D'NDEBUG')  \
            $(if $(DEBUG), $(CXXDIAGNO))
 
-LIBS = fmt
+LIBS = $(if $(shell  \
+            echo $$'\#if!__has_include(<format>)&&!__has_include(<experimental/format>)\n"cannot find <format>";\n\#endif'  \
+				    | $(CXX) -x c++ -E - | grep 'cannot find <format>' -  \
+				 ),fmt)
 LIBDIRS = ./lib/$(LIBS)-build/
 LDFLAGS = -pthread -lrt -l$(LIBS)
 
@@ -59,6 +64,7 @@ lib/fmt-build/libfmt.a:
 	cd lib/fmt-build;  \
 	CXX='$(CXX)' cmake ../fmt;  \
 	make -j$$((1+`nproc`))
+
 # ----------------------------------------------------------
 
 .PHONY: git
@@ -70,4 +76,18 @@ git:
 clean:
 	rm -rf bin/
 	rm -f /dev/shm/*ipcator-?*
-	rm -rf lib/?*-build/
+	for lib in $(LIBS); do  \
+	  mv lib/$$lib-build/lib$$lib.a lib/;  \
+	  rm -rf lib/$$lib-build/*;  \
+	  mv lib/lib$$lib.a lib/$$lib-build/;  \
+	done
+
+# 查看一些 Makefile 中定义的变量.
+.PHONY: print-vars
+print-vars:
+	@echo CXX = $(CXX)
+	@echo DEBUG = $(DEBUG)
+	@echo CXXFLAGS = $(CXXFLAGS)
+	@echo LIBS = $(LIBS)
+	@echo LIBDIRS = $(LIBDIRS)
+	@echo LDFLAGS = $(LDFLAGS)
