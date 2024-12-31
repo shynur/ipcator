@@ -29,22 +29,24 @@ LIBDIRS = $(if $(LIBS),./lib/$(LIBS)-build/)
 LIBFLAGS = $(if $(LIBS), -L$(LIBDIRS))
 LDFLAGS = -pthread -lrt $(if $(LIBS), -l$(LIBS))
 
+BUILD_INFO = $(if $(DEBUG),beta,rc)-$(shell basename `echo $(CXX) | awk -F' ' '{printf $$1}'`)-C++$(shell echo $${ISOCPP:-26})
+
 # ----------------------------------------------------------
 
 .PHONY: test
-test:  bin/test.exe
+test:  bin/test-$(BUILD_INFO).exe
 	rm -f /dev/shm/*ipcator-?*
 	@time $<
 
 .PHONY: ipc
-ipc:  bin/ipc-writer.exe  bin/ipc-reader.exe
+ipc:  bin/ipc-writer-$(BUILD_INFO).exe  bin/ipc-reader-$(BUILD_INFO).exe
 	rm -f /dev/shm/*ipcator-?*
 	echo
 	@for exe in $^; do (./$$exe; echo) & done
 	@wait
 
 
-bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  $(LIBDIRS)
+bin/test-$(BUILD_INFO).exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  $(LIBDIRS)
 	mkdir -p bin
 	mkdir -p /tmp/shynur/ipcator/;  \
 	if time  \
@@ -54,11 +56,11 @@ bin/test.exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  $(LIBDIRS)
 	else  \
 		LASTEXITCODE=$$?;  \
 		cat /tmp/shynur/ipcator/Makefile.stderr  \
-		| sed -e 's/warning:/😎👌:/g' -e 's/error:/😭👊:/g';  \
+		| sed -e 's/warning:/😩🙏:/g' -e 's/error:/😭👊:/g';  \
 		(exit $$LASTEXITCODE);  \
 	fi
 
-bin/ipc-%.exe:  src/ipc-%.cpp  include/ipcator.hpp  $(LIBDIRS)
+bin/ipc-%-$(BUILD_INFO).exe:  src/ipc-%.cpp  include/ipcator.hpp  $(LIBDIRS)
 	mkdir -p bin
 	time $(CXX) $(CXXFLAGS) $< $(LIBFLAGS) $(LDFLAGS) -o $@
 
@@ -80,13 +82,8 @@ git:
 .PHONY: clean
 clean:
 	rm -rf bin/
-	rm -f /dev/shm/*ipcator-?*
-	@# 默认保留依赖库的二进制文件, 因为生成一次耗时太久.
-	for lib in $(LIBS); do  \
-	  mv lib/$$lib-build/lib$$lib.a lib/;  \
-	  rm -rf lib/$$lib-build/*;  \
-	  mv lib/lib$$lib.a lib/$$lib-build/;  \
-	done
+	rm -f  /dev/shm/*ipcator-?*
+	rm -rf lib/?*-build/
 
 # 查看一些 Makefile 中定义的变量.
 .PHONY: print-vars
@@ -98,3 +95,4 @@ print-vars:
 	@echo LIBDIRS = $(LIBDIRS)
 	@echo LIBFLAGS = $(LIBFLAGS)
 	@echo LDFLAGS = $(LDFLAGS)
+	@echo BUILD_INFO = $(BUILD_INFO)
