@@ -1,6 +1,6 @@
 #pragma once
 #include <algorithm>  // ranges::fold_left
-#include <atomic>  // atomic_uint, atomic_thread_fence, memory_order_release, memory_order_acquire
+#include <atomic>  // atomic_uint, memory_order_relaxed
 #include <cassert>
 #include <chrono>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
@@ -165,7 +165,9 @@ namespace {
                         ;
                     else {
                         struct stat shm;
-                        fstat(fd, &shm);
+                        do {
+                            fstat(fd, &shm);
+                        } while (DEBUG && shm.st_size == 0);
                         return shm.st_size;
                     }
                 }()
@@ -518,37 +520,16 @@ auto operator""_shm(const unsigned long long size);
 /**
  * - ‘"/name"_shm[size]’ 创建 指定大小的命名 shm obj, 以读写模式映射.
  * - ‘+"/name"_shm’ 将命名的 shm obj 以只读模式映射至本地.
- * 当 ‘size=1’ 时, 这两种操作成为进程间的同步机制.
  */
-inline auto operator""_shm [[gnu::always_inline]] (const char *const name, [[maybe_unused]] std::size_t) {
+auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
         const char *const name;
-        auto operator[] [[gnu::always_inline]] (const std::size_t size) const {
+        auto operator[](const std::size_t size) const {
             auto&& rdwr_shm = Shared_Memory{name, size};
-
-            if (size == 1) {
-                auto flag = std::atomic_ref{rdwr_shm.get_area()[0]};
-                flag.fetch_or(true, std::memory_order_release);
-#if _GLIBCXX_RELEASE >= 14
-                flag.notify_all();
-#endif
-            }
-
             return std::move(rdwr_shm);
         }
-        auto operator+ [[gnu::always_inline]] () const {
+        auto operator+() const {
             auto&& rdonly_shm = Shared_Memory{name};
-
-            if (std::size(rdonly_shm.get_area()) == 1) {
-                auto flag = std::atomic_ref{rdonly_shm.get_area()[0]};
-#if _GLIBCXX_RELEASE >= 14
-                flag.wait(false, std::memory_order_acquire);
-#else
-                while (!flag.load())
-                    std::this_thread::sleep_for(10ms);
-#endif
-            }
-
             return rdonly_shm;
         }
     };
