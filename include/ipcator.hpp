@@ -321,15 +321,15 @@ class Shared_Memory {
             auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self
-        ) -> const auto& {
+        ) -> decltype(auto) {
 #endif
             if constexpr (!creat)
-                return self.area;
+                return std::as_const(self.area);
             else
                 if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
-                    return reinterpret_cast<const std::span<const unsigned char>&>(self.area);
+                    return std::span<const unsigned char>(self.area);
                 else
-                    return self.area;
+                    return std::as_const(self.area);
         }
 
         /**
