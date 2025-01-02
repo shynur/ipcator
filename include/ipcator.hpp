@@ -102,9 +102,10 @@ namespace {
      * 📂 shm obj, 并将其映射到进程自身的地址空间中.
      * - 对于 writer, 使用 `map_shm<true>(name,size)->void*`,
      *   其中 ‘size’ 是要创建的 shm obj 的大小;
-     * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`.
+     * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`;
+     *   若还要允许写, 使用 `map_shm<false, true>`.
      */
-    template <bool creat = false>
+    template <bool creat = false, bool writable = creat>
     constexpr auto map_shm = [](const auto resolve) consteval {
         return [=]
 #if __cplusplus >= 202302L
@@ -137,7 +138,12 @@ namespace {
                         else
                             assert(!"shm obj 仍未被创建, 导致 reader 等待超时");
                 }
-            }(std::bind(shm_open, name.c_str(), creat ? O_CREAT|O_EXCL|O_RDWR : O_RDONLY, 0666));
+            }(std::bind(
+                shm_open,
+                name.c_str(),
+                (creat ? O_CREAT|O_EXCL : 0) | (writable ? O_RDWR : O_RDONLY),
+                0666
+            ));
             assert(fd != -1);
 
             if constexpr (creat) {
@@ -167,7 +173,7 @@ namespace {
                         struct stat shm;
                         do {
                             fstat(fd, &shm);
-                        } while (DEBUG && shm.st_size == 0);
+                        } while (DEBUG && shm.st_size == 0);  // 等到 creator resize 完 shm obj.
                         return shm.st_size;
                     }
                 }()
@@ -177,8 +183,8 @@ namespace {
         assert(size);
         const auto area_addr = mmap(
             nullptr, size,
-            (creat ? PROT_WRITE : 0) | PROT_READ,
-            MAP_SHARED | (!creat ? MAP_NORESERVE : 0),
+            (writable ? PROT_WRITE : 0) | PROT_READ,
+            MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
             fd, 0
         );
         close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
