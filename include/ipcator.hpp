@@ -194,8 +194,11 @@ namespace {
             return area_addr;
         else {
             const struct {
-                const void *addr;
-                std::size_t length;
+                std::conditional_t<
+                    writable,
+                    void, const void
+                > *const addr;
+                const std::size_t length;
             } area{area_addr, size};
             return area;
         }
