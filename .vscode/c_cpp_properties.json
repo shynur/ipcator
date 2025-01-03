@@ -1,0 +1,21 @@
+{
+  "configurations": [
+      {
+          "name": "Linux",
+          "includePath": [
+              "${workspaceFolder}/include/**"
+          ],
+          "defines": [],
+          "compilerPath": "/usr/local/bin/g++",
+          "cppStandard": "c++23",
+          "intelliSenseMode": "linux-gcc-x64",
+          "compilerArgs": [
+              "-std=c++26",
+              "-Wpedantic",
+              "-Wall",
+              "-Wextra"
+          ]
+      }
+  ],
+  "version": 4
+}

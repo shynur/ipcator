@@ -100,7 +100,7 @@ namespace {
     /**
      * 给定 shared memory object 的名字, 创建/打开
      * 📂 shm obj, 并将其映射到进程自身的地址空间中.
-     * - 对于 writer, 使用 `map_shm<true>(name,size)->void*`,
+     * - 对于 writer, 使用 `map_shm<true>(name,size)->unsigned char*`,
      *   其中 ‘size’ 是要创建的 shm obj 的大小;
      * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`;
      *   若还要允许写, 使用 `map_shm<false, true>`.
@@ -117,9 +117,9 @@ namespace {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
             const auto fd = [](const auto do_open) {
-                if constexpr (creat)
+                if constexpr (creat || !DEBUG)
                     return do_open();
-                else {
+                else /* !creat and DEBUG */ {
                     std::future opening = std::async(
                         [&] {
                             while (true)
@@ -133,10 +133,7 @@ namespace {
                     if (opening.wait_for(0.5s) == std::future_status::ready) [[likely]]
                         return opening.get();
                     else
-                        if constexpr (DEBUG)
-                            std::exit(0);
-                        else
-                            assert(!"shm obj 仍未被创建, 导致 reader 等待超时");
+                        assert(!"shm obj 仍未被创建, 导致 reader 等待超时");
                 }
             }(std::bind(
                 shm_open,
@@ -181,7 +178,10 @@ namespace {
         };
     }([](const auto fd, const std::size_t size) {
         assert(size);
-        const auto area_addr = mmap(
+#if __has_cpp_attribute(assume)
+            [[assume(size)]];
+#endif
+        const auto area_addr = (unsigned char *)mmap(
             nullptr, size,
             (writable ? PROT_WRITE : 0) | PROT_READ,
             MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
@@ -196,7 +196,8 @@ namespace {
             const struct {
                 std::conditional_t<
                     writable,
-                    void, const void
+                    unsigned char,
+                    const unsigned char
                 > *const addr;
                 const std::size_t length;
             } area{area_addr, size};
@@ -216,7 +217,8 @@ class Shared_Memory {
         std::span<
             std::conditional_t<
                 creat,
-                unsigned char, const unsigned char
+                unsigned char,
+                const unsigned char
             >
         > area;
     public:
@@ -226,7 +228,7 @@ class Shared_Memory {
          */
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
-            (unsigned char *)map_shm<creat>(name, size),
+            map_shm<creat>(name, size),
             size,
         } {
             if constexpr (DEBUG) {
@@ -250,10 +252,7 @@ class Shared_Memory {
 #endif
             -> decltype(this->area) {
                 const auto [addr, length] = map_shm<>(name);
-                return {
-                    (const unsigned char *)addr,
-                    length,
-                };
+                return {addr, length};
             }()
         } {
             if constexpr (DEBUG) {
@@ -306,7 +305,7 @@ class Shared_Memory {
         /**
          * 取消映射, 并在 shm obj 的被映射数目为 0 的时候自动销毁它.
          */
-        ~Shared_Memory() noexcept  {
+        ~Shared_Memory() noexcept {
             if (std::data(this->area) == nullptr)
                 return;
 
@@ -607,7 +606,6 @@ namespace {
 #endif
         ;
 
-        assert(("/dev/shm/" + base_name + '.' + suffix).length() == 255);
         return '/' + base_name + '.' + suffix;
     }
 }
@@ -660,7 +658,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         struct ShM_As_Addr {
             using is_transparent = int;
 
-            static auto get_addr(const auto& shm_or_ptr) noexcept
+            static auto get_addr(const auto& shm_or_ptr)
             -> const void * {
                 if constexpr (std::is_same_v<
                     std::decay_t<decltype(shm_or_ptr)>,
@@ -724,7 +722,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             [[assume(ok)]];
 #endif
             if constexpr (!using_ordered_set)
-                this->last_inserted = &*inserted;
+                this->last_inserted = std::to_address(inserted);
 
             const auto area = std::data(
                 const_cast<Shared_Memory<true>&>(*inserted).get_area()
@@ -740,12 +738,12 @@ class ShM_Resource: public std::pmr::memory_resource {
             const auto whatcanisay_shm_out = std::move(
                 this->resources
 #ifdef __cpp_lib_associative_heterogeneous_erasure
-                .template extract<const void *>((const void *)area)
+                .template extract<const void *>(area)
 #else
                 .extract(
                     std::find_if(
                         this->resources.cbegin(), this->resources.cend(),
-                        [area=(const void *)area](const auto& shm) {
+                        [area=(const void *)area](const auto& shm) noexcept {
                             if constexpr (using_ordered_set)
                                 return !ShM_As_Addr{}(shm, area) == !ShM_As_Addr{}(area, shm);
                             else
@@ -770,7 +768,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         }
 
     public:
-        ShM_Resource() = default;
+        ShM_Resource() noexcept = default;
         ShM_Resource(ShM_Resource&& other) noexcept
         : resources{
             std::move(other.resources)
@@ -814,7 +812,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             swap(*this, other);
             return *this;
         }
-        ~ShM_Resource() {
+        ~ShM_Resource() noexcept {
             if constexpr (DEBUG) {
                 // 显式删除以触发日志输出.
                 while (!std::empty(this->resources)) {
@@ -853,6 +851,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 
         /**
          * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中.
+         * 但首先, 你得确保 ‘obj’ 确实在 self 的注册表中.
          */
         auto find_arena(const auto *const obj) const
         -> const auto& requires(using_ordered_set) {
@@ -956,13 +955,19 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
          * 设定缓冲区的初始大小, 但实际是惰性分配的💤.
          * ‘initial_size’ 如果不是📄页表大小的整数倍,
          * 几乎_一定_会浪费空间.
+         * ‘initial_size’ 必须是*正数*!
          */
         Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
         : monotonic_buffer_resource{
             ceil_to_page_size(initial_size),
             new ShM_Resource<std::unordered_set>,
-        } {}
-        ~Monotonic_ShM_Buffer() {
+        } {
+            assert(initial_size);
+#if __has_cpp_attribute(assume)
+            [[assume(initial_size)]];
+#endif
+        }
+        ~Monotonic_ShM_Buffer() noexcept {
             this->release();
             delete this->monotonic_buffer_resource::upstream_resource();
         }
@@ -986,7 +991,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
 
         void do_deallocate(
             void *const area, const std::size_t size, const std::size_t alignment
-        ) override {
+        ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
             // 虚晃一枪; actually no-op.
@@ -1034,7 +1039,7 @@ class ShM_Pool: public std::conditional_t<
         }
 
     public:
-        ShM_Pool(const std::pmr::pool_options& options = {.largest_required_pool_block=1})
+        ShM_Pool(const std::pmr::pool_options& options = {.largest_required_pool_block=1}) noexcept
         : midstream_pool_t{
             decltype(options){
                 .max_blocks_per_chunk = options.max_blocks_per_chunk,
@@ -1044,7 +1049,7 @@ class ShM_Pool: public std::conditional_t<
             },
             new ShM_Resource<std::set>,
         } {}
-        ~ShM_Pool() {
+        ~ShM_Pool() noexcept {
             this->release();
             delete this->midstream_pool_t::upstream_resource();
         }
@@ -1086,14 +1091,13 @@ static_assert(
  * 所指定的上限值 (例如, 用 LRU 算法时可以限制缓存的最大值).
  */
 struct ShM_Reader {
-        template <typename T, typename CharT = char> requires (sizeof(CharT) == 1)
+        template <typename T>
         auto read(
-            const std::basic_string_view<CharT> shm_name, const std::size_t offset
+            const std::string_view shm_name, const std::size_t offset
         ) -> const auto& {
             return *(T *)(
-                std::data(
-                    this->select_shm((const std::string_view&)shm_name).get_area()
-                ) + offset
+                std::data(this->select_shm(shm_name).get_area())
+                + offset
             );
         }
 
@@ -1135,7 +1139,7 @@ struct ShM_Reader {
         struct ShM_As_Str {
             using is_transparent = int;
 
-            static auto get_name(const auto& shm_or_name) noexcept
+            static auto get_name(const auto& shm_or_name)
             -> std::string_view {
                 if constexpr (std::is_same_v<
                     std::decay_t<decltype(shm_or_name)>,

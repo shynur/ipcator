@@ -16,5 +16,5 @@ int main() {
     );
     auto notify_reader = "/ipcator-writer-done"_shm[1];
 
-    +"/ipcator-reader-done"_shm;
+    std::this_thread::sleep_for(100ms);
 }
