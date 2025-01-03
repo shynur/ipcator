@@ -87,7 +87,7 @@ namespace {
      * 将数字向上取整, 成为📄页表大小的整数倍.
      * 像这样设置共享内存的大小, 可以提高内存♻️利用率.
      */
-    inline auto ceil_to_page_size(const std::size_t min_length)
+    constexpr auto ceil_to_page_size [[gnu::always_inline]] (const std::size_t min_length) noexcept
     -> std::size_t {
         const auto current_num_pages = min_length / getpagesize();
         const bool need_one_more_page = min_length % getpagesize();
@@ -113,10 +113,10 @@ namespace {
 #endif
         (
             const std::string& name, const std::unsigned_integral auto... size
-        ) requires (sizeof...(size) == creat) {
+        ) noexcept (sizeof...(size) == creat) {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
-            const auto fd = [](const auto do_open) {
+            const auto fd = [](const auto do_open) noexcept {
                 if constexpr (creat || !DEBUG)
                     return do_open();
                 else /* !creat and DEBUG */ {
@@ -157,7 +157,7 @@ namespace {
 
             return resolve(
                 fd,
-                [&] {
+                [&] noexcept {
                     if constexpr (creat)
                         return
 #ifdef __cpp_pack_indexing
@@ -176,7 +176,7 @@ namespace {
                 }()
             );
         };
-    }([](const auto fd, const std::size_t size) {
+    }([](const auto fd, const std::size_t size) noexcept {
         assert(size);
 #if __has_cpp_attribute(assume)
             [[assume(size)]];
@@ -226,7 +226,7 @@ class Shared_Memory {
          * 创建名字为 ‘name’ (用 ‘generate_shm_UUName’ 自动生成最方便), 大小为 ‘size’
          * (建议用 ‘ceil_to_page_size’ 向上取整) 的共享内存对象, 并映射到进程的地址空间中.
          */
-        Shared_Memory(const std::string name, const std::size_t size) requires(creat)
+        [[gnu::always_inline]] Shared_Memory(const std::string name, const std::size_t size) noexcept requires(creat)
         : name{name}, area{
             map_shm<creat>(name, size),
             size,
@@ -244,7 +244,7 @@ class Shared_Memory {
          * 指定 ‘size’, 因为这是🈚意义的.  Reader 打开的是已经存在于内存中的
          * shm obj, 占用大小已经确定, 更小的 ‘size’ 并不能节约系统资源.
          */
-        Shared_Memory(const std::string name) requires(!creat)
+        [[gnu::always_inline]] Shared_Memory(const std::string name) noexcept requires(!creat)
         : name{name}, area{
             [&]
 #if __cplusplus <= 202002L
@@ -269,7 +269,7 @@ class Shared_Memory {
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
             }
         }
-        Shared_Memory(Shared_Memory&& other) noexcept
+        [[gnu::always_inline]] Shared_Memory(Shared_Memory&& other) noexcept
         : name{std::move(other.name)}, area{
             // Self 的析构函数靠 ‘area’ 是否为空来判断
             // 是否持有所有权, 所以此处需要强制置空.
@@ -278,7 +278,7 @@ class Shared_Memory {
         /**
          * 在进程地址空间的另一处映射一个相同的 shm obj.
          */
-        Shared_Memory(const Shared_Memory& other) requires(!creat)
+        [[gnu::always_inline]] Shared_Memory(const Shared_Memory& other) noexcept requires(!creat)
         : Shared_Memory{other.name} {
             // 单个进程手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
             // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
@@ -289,7 +289,7 @@ class Shared_Memory {
         /**
          * 在进程地址空间的另一处映射一个相同的 shm obj, 只读模式.
          */
-        Shared_Memory(const Shared_Memory<!creat>& other) requires(!creat)
+        Shared_Memory(const Shared_Memory<!creat>& other) noexcept requires(!creat)
         : Shared_Memory{other.get_name()} { /* 同上 */ }
         friend void swap(Shared_Memory& a, decltype(a) b) noexcept {
             std::swap(a.name, b.name);
@@ -298,14 +298,14 @@ class Shared_Memory {
         /**
          * 映射等号与右侧同名的 shm obj, 左侧原有的 shm obj 被回收.
          */
-        auto& operator=(Shared_Memory other) {
+        auto& operator=(Shared_Memory other) noexcept {
             swap(*this, other);
             return *this;
         }
         /**
          * 取消映射, 并在 shm obj 的被映射数目为 0 的时候自动销毁它.
          */
-        ~Shared_Memory() noexcept {
+        [[gnu::always_inline]] ~Shared_Memory() noexcept {
             if (std::data(this->area) == nullptr)
                 return;
 
@@ -407,11 +407,11 @@ class Shared_Memory {
         auto& operator[](
 #ifndef __cpp_explicit_this_parameter
             const std::size_t i
-        ) const {
+        ) noexcept const {
             auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self, const std::size_t i
-        ) {
+        ) noexcept {
 #endif
             assert(i < std::size(self));
             return *(std::begin(self) + i);
@@ -533,12 +533,10 @@ auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
         const char *const name;
         auto operator[](const std::size_t size) const {
-            auto&& rdwr_shm = Shared_Memory{name, size};
-            return std::move(rdwr_shm);
+            return Shared_Memory{name, size};;
         }
         auto operator+() const {
-            auto&& rdonly_shm = Shared_Memory{name};
-            return rdonly_shm;
+            return Shared_Memory{name};
         }
     };
     return ShM_Constructor_Proxy{name};
@@ -589,13 +587,13 @@ namespace {
                     available_chars,
                     gen = std::mt19937{std::random_device{}()},
                     distri = std::uniform_int_distribution<>{0, available_chars.length()-1}
-                ](...) mutable {
+                ](...) mutable noexcept {
                     return available_chars[distri(gen)];
                 }),
                 ""s, std::plus<>{}
             )
 #else
-            [&] {
+            [&] noexcept {
                 auto gen = std::mt19937{std::random_device{}()};
                 auto distri = std::uniform_int_distribution<>{0, available_chars.length()-1};
                 std::string suffix;
@@ -658,7 +656,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         struct ShM_As_Addr {
             using is_transparent = int;
 
-            static auto get_addr(const auto& shm_or_ptr)
+            static auto get_addr [[gnu::always_inline]] (const auto& shm_or_ptr)
             -> const void * {
                 if constexpr (std::is_same_v<
                     std::decay_t<decltype(shm_or_ptr)>,
@@ -670,7 +668,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
 
             /* As A Comparator */
-            bool operator()(const auto& a, const auto& b) const noexcept {
+            bool operator() [[gnu::always_inline]] (const auto& a, const auto& b) const noexcept {
                 const auto pa = get_addr(a), pb = get_addr(b);
 
                 if constexpr (using_ordered_set)
@@ -679,7 +677,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                     return pa == pb;
             }
             /* As A Hasher */
-            auto operator()(const auto& shm) const noexcept
+            auto operator() [[gnu::always_inline]] (const auto& shm) const noexcept
             -> std::size_t {
                 const auto addr = get_addr(shm);
                 return std::hash<std::decay_t<decltype(addr)>>{}(addr);
@@ -694,7 +692,8 @@ class ShM_Resource: public std::pmr::memory_resource {
     protected:
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
-        ) noexcept(false) override {
+        ) noexcept override {
+            /*
             if (alignment > getpagesize() + 0u) [[unlikely]] {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
@@ -712,6 +711,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 };
                 throw TooLargeAlignment{alignment};
             }
+            */
 
             const auto [inserted, ok] = this->resources.emplace(
                 generate_shm_UUName(),
@@ -732,7 +732,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         }
         void do_deallocate(
             void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]
-        ) override {
+        ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
             const auto whatcanisay_shm_out = std::move(
@@ -780,7 +780,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #if !(__GNUC__ == 14 && __GNUC_MINOR__ == 2)
         friend class ShM_Resource<std::set>;  // see below:
 #endif
-        ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
+        ShM_Resource(ShM_Resource<std::unordered_set>&& other) noexcept requires(using_ordered_set)
         : resources{[
 #if __GNUC__ == 14 && __GNUC_MINOR__ == 2
             other_resources=std::move(other).get_resources()
@@ -788,7 +788,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             &other_resources=other.resources
 #endif
             , this
-        ]() mutable {
+        ]() mutable noexcept {
                 decltype(this->resources) resources;
 
                 while (!std::empty(other_resources))
@@ -808,7 +808,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             if constexpr (!using_ordered_set)
                 std::swap(a.last_inserted, b.last_inserted);
         }
-        auto& operator=(ShM_Resource other) {
+        auto& operator=(ShM_Resource other) noexcept {
             swap(*this, other);
             return *this;
         }
@@ -853,7 +853,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中.
          * 但首先, 你得确保 ‘obj’ 确实在 self 的注册表中.
          */
-        auto find_arena(const auto *const obj) const
+        auto find_arena [[gnu::always_inline]] (const auto *const obj) const noexcept
         -> const auto& requires(using_ordered_set) {
             const auto& shm = *(
                 --this->resources.upper_bound((const void *)obj)
@@ -957,7 +957,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
          * 几乎_一定_会浪费空间.
          * ‘initial_size’ 必须是*正数*!
          */
-        Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
+        Monotonic_ShM_Buffer(const std::size_t initial_size = 1) noexcept
         : monotonic_buffer_resource{
             ceil_to_page_size(initial_size),
             new ShM_Resource<std::unordered_set>,
@@ -981,7 +981,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
     protected:
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
-        ) override {
+        ) noexcept override {
             const auto area = this->monotonic_buffer_resource::do_allocate(
                 size, alignment
             );
@@ -996,7 +996,9 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
 
             // 虚晃一枪; actually no-op.
             // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
+            /*
             this->monotonic_buffer_resource::do_deallocate(area, size, alignment);
+            */
         }
 };
 
@@ -1023,7 +1025,7 @@ class ShM_Pool: public std::conditional_t<
     protected:
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
-        ) override {
+        ) noexcept override {
             const auto area = this->midstream_pool_t::do_allocate(
                 size, alignment
             );
@@ -1033,7 +1035,7 @@ class ShM_Pool: public std::conditional_t<
 
         void do_deallocate(
             void *const area, const std::size_t size, const std::size_t alignment
-        ) override {
+        ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
             this->midstream_pool_t::do_deallocate(area, size, alignment);
         }
@@ -1092,16 +1094,16 @@ static_assert(
  */
 struct ShM_Reader {
         template <typename T>
-        auto read(
+        auto read [[gnu::always_inline]] (
             const std::string_view shm_name, const std::size_t offset
-        ) -> const auto& {
+        ) noexcept -> const auto& {
             return *(T *)(
                 std::data(this->select_shm(shm_name).get_area())
                 + offset
             );
         }
 
-        auto select_shm(const std::string_view name) -> const
+        auto select_shm(const std::string_view name) noexcept -> const
 #if __GNUC__ == 14 && __GNUC_MINOR__ == 2
             auto
 #else
@@ -1115,7 +1117,7 @@ struct ShM_Reader {
 #else
                     std::find_if(
                         this->cache.cbegin(), this->cache.cend(),
-                        [&](const auto& shm) {
+                        [&](const auto& shm) noexcept {
                             return ShM_As_Str{}(name) == ShM_As_Str{}(shm)
                                    && ShM_As_Str{}(name, shm);
                         }
@@ -1139,7 +1141,7 @@ struct ShM_Reader {
         struct ShM_As_Str {
             using is_transparent = int;
 
-            static auto get_name(const auto& shm_or_name)
+            static auto get_name [[gnu::always_inline]] (const auto& shm_or_name)
             -> std::string_view {
                 if constexpr (std::is_same_v<
                     std::decay_t<decltype(shm_or_name)>,
@@ -1151,13 +1153,13 @@ struct ShM_Reader {
             }
 
             /* Hash */
-            auto operator()(const auto& shm) const noexcept
+            auto operator() [[gnu::always_inline]] (const auto& shm) const noexcept
             -> std::size_t {
                 const auto name = get_name(shm);
                 return std::hash<std::decay_t<decltype(name)>>{}(name);
             }
             /* KeyEqual */
-            bool operator()(const auto& a, const auto& b) const noexcept {
+            bool operator() [[gnu::always_inline]] (const auto& a, const auto& b) const noexcept {
                 return get_name(a) == get_name(b);
             }
         };
