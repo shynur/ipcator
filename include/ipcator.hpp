@@ -112,7 +112,7 @@ namespace {
     >
     constexpr auto map_shm = [](const auto resolve) consteval {
 #if __GNUC__ < 14  // ipcator#2
-        constexpr auto writable = creat;
+        constexpr auto writable = true;
 #endif
         return [=]
 #if __cplusplus >= 202302L
@@ -185,7 +185,7 @@ namespace {
         };
     }([](const auto fd, const std::size_t size) {
 #if __GNUC__ < 14  // ipcator#2
-        constexpr auto writable = creat;
+        constexpr auto writable = true;
 #endif
         assert(size);
 #if __has_cpp_attribute(assume)
