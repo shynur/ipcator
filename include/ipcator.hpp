@@ -89,9 +89,9 @@ namespace {
      */
     constexpr auto ceil_to_page_size [[gnu::always_inline]] (const std::size_t min_length) noexcept
     -> std::size_t {
-        const auto current_num_pages = min_length / getpagesize();
-        const bool need_one_more_page = min_length % getpagesize();
-        return (current_num_pages + need_one_more_page) * getpagesize();
+        const auto current_num_pages = min_length / 4096;
+        const bool need_one_more_page = min_length % 4096;
+        return (current_num_pages + need_one_more_page) * 4096;
     }
 }
 
@@ -113,7 +113,7 @@ namespace {
 #endif
         (
             const std::string& name, const std::unsigned_integral auto... size
-        ) noexcept (sizeof...(size) == creat) {
+        ) noexcept requires (sizeof...(size) == creat) {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
             const auto fd = [](const auto do_open) noexcept {
@@ -157,7 +157,7 @@ namespace {
 
             return resolve(
                 fd,
-                [&] noexcept {
+                [&]() noexcept {
                     if constexpr (creat)
                         return
 #ifdef __cpp_pack_indexing
@@ -407,7 +407,7 @@ class Shared_Memory {
         auto& operator[](
 #ifndef __cpp_explicit_this_parameter
             const std::size_t i
-        ) noexcept const {
+        ) const noexcept {
             auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self, const std::size_t i
@@ -593,7 +593,7 @@ namespace {
                 ""s, std::plus<>{}
             )
 #else
-            [&] noexcept {
+            [&]() noexcept {
                 auto gen = std::mt19937{std::random_device{}()};
                 auto distri = std::uniform_int_distribution<>{0, available_chars.length()-1};
                 std::string suffix;
