@@ -366,7 +366,10 @@ class Shared_Memory {
         auto pretty_memory_view(
             const std::size_t num_col = 16, const std::string_view space = " "
         ) const {
-#if defined __cpp_lib_ranges_fold && defined __cpp_lib_ranges_chunk && defined __cpp_lib_ranges_join_with
+#if defined __cpp_lib_ranges_fold  \
+    && defined __cpp_lib_ranges_chunk  \
+    && defined __cpp_lib_ranges_join_with  \
+    && defined __cpp_lib_bind_back
             return std::ranges::fold_left(
                 this->area
                 | std::views::chunk(num_col)
@@ -426,7 +429,16 @@ class Shared_Memory {
             return *(std::begin(self) + i);
         }
 #ifdef __cpp_multidimensional_subscript
-        auto operator[](this auto& self, const std::size_t start, decltype(start) end) {
+        auto operator[](
+# ifndef __cpp_explicit_this_parameter
+            const std::size_t start, decltype(start) end
+        ) const {
+            auto& self = const_cast<Shared_Memory&>(*this);
+# else
+            this auto& self,
+            const std::size_t start, decltype(start) end
+        ) {
+# endif
             assert(start <= end && end <= std::size(self));
             return std::span{
                 std::begin(self) + start,
