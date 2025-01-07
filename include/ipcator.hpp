@@ -103,10 +103,17 @@ namespace {
      * - 对于 writer, 使用 `map_shm<true>(name,size)->unsigned char*`,
      *   其中 ‘size’ 是要创建的 shm obj 的大小;
      * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`;
-     *   若还要允许写, 使用 `map_shm<false, true>`.
+     *   若还要允许写, 使用 `map_shm<false,true>` (另见 ipcator#2).
      */
-    template <bool creat = false, bool writable = creat>
+    template <bool creat = false
+#if __GNUC__ >= 14  // g++-10.x 有 bug, 不确定 v11-13 有没有, 干脆全部禁掉.  (ipcator#2)
+        , bool writable = creat
+#endif
+    >
     constexpr auto map_shm = [](const auto resolve) consteval {
+#if __GNUC__ < 14  // ipcator#2
+        constexpr auto writable = creat;
+#endif
         return [=]
 #if __cplusplus >= 202302L
             [[nodiscard]]
@@ -177,6 +184,9 @@ namespace {
             );
         };
     }([](const auto fd, const std::size_t size) noexcept {
+#if __GNUC__ < 14  // ipcator#2
+        constexpr auto writable = creat;
+#endif
         assert(size);
 #if __has_cpp_attribute(assume)
             [[assume(size)]];
@@ -196,8 +206,7 @@ namespace {
             const struct {
                 std::conditional_t<
                     writable,
-                    unsigned char,
-                    const unsigned char
+                    unsigned char, const unsigned char
                 > *const addr;
                 const std::size_t length;
             } area{area_addr, size};
@@ -722,7 +731,12 @@ class ShM_Resource: public std::pmr::memory_resource {
             [[assume(ok)]];
 #endif
             if constexpr (!using_ordered_set)
-                this->last_inserted = std::to_address(inserted);
+                this->last_inserted = std::to_address(
+#if __GNUC__ < 11 or __GNUC__ == 11 and __GNUC_MINOR__ < 3  // GCC 的 bug, 见 ipcator#2.
+                    &*
+#endif
+                    inserted
+                );
 
             const auto area = std::data(
                 const_cast<Shared_Memory<true>&>(*inserted).get_area()
