@@ -7,7 +7,7 @@
 ```bash
 git clone -b master --single-branch git@github.com:shynur/ipcator.git
 (cd ipcator
- git checkout `git tag --sort=-creatordate | head -n 1`)
+ git checkout `git tag --sort=-creatordate | grep [0-9]\$ - | head -n 1`)
 ```
 
 ### 工具链要求
