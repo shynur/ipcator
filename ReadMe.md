@@ -22,7 +22,7 @@ git clone -b master --single-branch git@github.com:shynur/ipcator.git
   CXX=g++-10 ISOCPP=20 make print-vars
   ```
 
-  (不要使用 `clang++-18.1` 及其附近版本, `clang++` 总是 crash (llvm/llvm-project#113324).  但经过测试, `clang++-20` 是没有问题的.)
+  (⚠: `clang++` 在编译时可能会 crash (llvm/llvm-project#113324).  但经过测试, `clang++-19` 是没有问题的.)
 
 ### 依赖项
 

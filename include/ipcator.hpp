@@ -867,7 +867,11 @@ class ShM_Resource: public std::pmr::memory_resource {
             )
                 return std::as_const(self.resources);
             else
-                return std::move(self.resources);
+                return
+#ifdef __cpp_explicit_this_parameter
+                    std::move
+#endif
+                    (self.resources);
         }
 
         friend auto operator<<(std::ostream& out, const ShM_Resource& resrc)
@@ -946,7 +950,15 @@ struct std::formatter<ShM_Resource<set_t>> {
                 R":({{ "resources": {{ "|size|": {} }}, "constructor()": "ShM_Resource<std::set>" }}):",
                 std::make_format_args(size)
             );
-        else
+        else {
+            // 对于 ‘ShM_Resource<std::unordered_set>’, 因为有字段
+            // ‘last_inserted’ (指针), 必须保证它没有 dangling.
+            // 也就是, 得排除 ‘size’ 为 0 的情形.  这没有关系, 因为
+            // 查看一个空 ‘ShM_Resource’ 的 JSON 没什么意义.
+            assert(size);
+#if __has_cpp_attribute(assume)
+            [[assume(size)]];
+#endif
             return std::vformat_to(
                 context.out(),
                 R":({{
@@ -968,6 +980,7 @@ struct std::formatter<ShM_Resource<set_t>> {
                     *resrc.last_inserted
                 )
             );
+        }
     }
 };
 
