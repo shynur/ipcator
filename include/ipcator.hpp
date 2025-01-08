@@ -106,12 +106,12 @@ namespace {
      *   若还要允许写, 使用 `map_shm<false,true>` (另见 ipcator#2).
      */
     template <bool creat = false
-#if __GNUC__ >= 14  // g++-10.x 有 bug, 不确定 v11-13 有没有, 干脆全部禁掉.  (ipcator#2)
+#if __GNUC__ >= 11  // g++-10 有 bug (ipcator#2).
         , bool writable = creat
 #endif
     >
     constexpr auto map_shm = [](const auto resolve) consteval {
-#if __GNUC__ < 14  // ipcator#2
+#if __GNUC__ < 11  // ipcator#2
         constexpr auto writable = true;
 #endif
         return [=]
@@ -120,7 +120,7 @@ namespace {
 #endif
         (
             const std::string& name, const std::unsigned_integral auto... size
-        ) requires (sizeof...(size) == creat) {
+        ) requires(sizeof...(size) == creat) {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
             const auto fd = [](const auto do_open) {
@@ -184,7 +184,7 @@ namespace {
             );
         };
     }([](const auto fd, const std::size_t size) {
-#if __GNUC__ < 14  // ipcator#2
+#if __GNUC__ < 11  // ipcator#2
         constexpr auto writable = true;
 #endif
         assert(size);
@@ -665,7 +665,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             else if constexpr (std::is_same_v<set_t<int>, std::unordered_set<int>>)
                 return false;
             else {
-#if __GNUC__ >= 14
+#if __GNUC__ >= 13  // P2593R1
                 static_assert(false, "只接受 ‘std::{,unordered_}set’ 作为注册表格式.");
 #elifdef __cpp_lib_unreachable
                 std::unreachable();
@@ -744,7 +744,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #endif
             if constexpr (!using_ordered_set)
                 this->last_inserted = std::to_address(
-#if __GNUC__ < 11 or __GNUC__ == 11 and __GNUC_MINOR__ < 3  // GCC 的 bug, 见 ipcator#2.
+#if __GNUC__ < 11  // GCC 的 bug, 见 ipcator#2.
                     &*
 #endif
                     inserted
@@ -803,12 +803,12 @@ class ShM_Resource: public std::pmr::memory_resource {
                 this->last_inserted = std::move(other.last_inserted);
         }
 
-#if !(__GNUC__ == 14 && __GNUC_MINOR__ == 2)
-        friend class ShM_Resource<std::set>;  // see below:
+#if __GNUC__ == 15 or __clang_major__ == 19  // ipcator#3
+        friend class ShM_Resource<std::set>;
 #endif
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
         : resources{[
-#if __GNUC__ == 14 && __GNUC_MINOR__ == 2
+#if __GNUC__ != 15 and __clang_major__ != 19  // ipcator#3
             other_resources=std::move(other).get_resources()
 #else
             &other_resources=other.resources
@@ -1128,10 +1128,10 @@ struct ShM_Reader {
         }
 
         auto select_shm(const std::string_view name) -> const
-#if __GNUC__ == 14 && __GNUC_MINOR__ == 2
-            auto
-#else
+#if __GNUC__ == 15 or __clang_major__ == 19  // ipcator#3
             Shared_Memory<false>
+#else
+            auto
 #endif
         & {
             if (
