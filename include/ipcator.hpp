@@ -106,12 +106,12 @@ namespace {
      *   若还要允许写, 使用 `map_shm<false,true>` (另见 ipcator#2).
      */
     template <bool creat = false
-#if __GNUC__ >= 11  // g++-10 有 bug (ipcator#2).
+#if __GNUC__ != 10  // g++-10 有 bug (ipcator#2).
         , bool writable = creat
 #endif
     >
     constexpr auto map_shm = [](const auto resolve) consteval {
-#if __GNUC__ < 11  // ipcator#2
+#if __GNUC__ == 10  // ipcator#2
         constexpr auto writable = true;
 #endif
         return [=]
@@ -184,7 +184,7 @@ namespace {
             );
         };
     }([](const auto fd, const std::size_t size) {
-#if __GNUC__ < 11  // ipcator#2
+#if __GNUC__ == 10  // ipcator#2
         constexpr auto writable = true;
 #endif
         assert(size);
@@ -665,7 +665,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             else if constexpr (std::is_same_v<set_t<int>, std::unordered_set<int>>)
                 return false;
             else {
-#if __GNUC__ >= 13  // P2593R1
+#if !__GNUG__ || __GNUC__ >= 13  // P2593R1
                 static_assert(false, "只接受 ‘std::{,unordered_}set’ 作为注册表格式.");
 #elifdef __cpp_lib_unreachable
                 std::unreachable();
@@ -744,7 +744,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #endif
             if constexpr (!using_ordered_set)
                 this->last_inserted = std::to_address(
-#if __GNUC__ < 11  // GCC 的 bug, 见 ipcator#2.
+#if __GNUC__ == 10  // GCC 的 bug, 见 ipcator#2.
                     &*
 #endif
                     inserted
