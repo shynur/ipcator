@@ -803,12 +803,12 @@ class ShM_Resource: public std::pmr::memory_resource {
                 this->last_inserted = std::move(other.last_inserted);
         }
 
-#if __GNUC__ == 15 or __clang_major__ == 19  // ipcator#3
+#if __GNUC__ == 15 || __clang_major__ == 19 || __clang_major__ == 20  // ipcator#3
         friend class ShM_Resource<std::set>;
 #endif
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) noexcept requires(using_ordered_set)
         : resources{[
-#if __GNUC__ != 15 and __clang_major__ != 19  // ipcator#3
+#if __GNUC__ != 15 && __clang_major__ != 19 && __clang_major__ != 20  // ipcator#3
             other_resources=std::move(other).get_resources()
 #else
             &other_resources=other.resources
@@ -1143,7 +1143,7 @@ struct ShM_Reader {
         }
 
         auto select_shm(const std::string_view name) noexcept -> const
-#if __GNUC__ == 15 or __clang_major__ == 19  // ipcator#3
+#if __GNUC__ == 15 or __clang_major__ == 19 or __clang_major__ == 20  // ipcator#3
             Shared_Memory<false>
 #else
             auto
