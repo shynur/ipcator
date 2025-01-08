@@ -106,12 +106,12 @@ namespace {
      *   若还要允许写, 使用 `map_shm<false,true>` (另见 ipcator#2).
      */
     template <bool creat = false
-#if __GNUC__ >= 14  // g++-10.x 有 bug, 不确定 v11-13 有没有, 干脆全部禁掉.  (ipcator#2)
+#if __GNUC__ >= 11  // g++-10 有 bug (ipcator#2).
         , bool writable = creat
 #endif
     >
     constexpr auto map_shm = [](const auto resolve) consteval {
-#if __GNUC__ < 14  // ipcator#2
+#if __GNUC__ < 11  // ipcator#2
         constexpr auto writable = true;
 #endif
         return [=]
@@ -120,7 +120,7 @@ namespace {
 #endif
         (
             const std::string& name, const std::unsigned_integral auto... size
-        ) noexcept requires (sizeof...(size) == creat) {
+        ) noexcept requires(sizeof...(size) == creat) {
 
             assert("/dev/shm"s.length() + name.length() <= 255);
             const auto fd = [](const auto do_open) noexcept {
@@ -184,7 +184,7 @@ namespace {
             );
         };
     }([](const auto fd, const std::size_t size) noexcept {
-#if __GNUC__ < 14  // ipcator#2
+#if __GNUC__ < 11  // ipcator#2
         constexpr auto writable = true;
 #endif
         assert(size);
@@ -366,7 +366,10 @@ class Shared_Memory {
         auto pretty_memory_view(
             const std::size_t num_col = 16, const std::string_view space = " "
         ) const {
-#if defined __cpp_lib_ranges_fold && defined __cpp_lib_ranges_chunk && defined __cpp_lib_ranges_join_with
+#if defined __cpp_lib_ranges_fold  \
+    && defined __cpp_lib_ranges_chunk  \
+    && defined __cpp_lib_ranges_join_with  \
+    && defined __cpp_lib_bind_back
             return std::ranges::fold_left(
                 this->area
                 | std::views::chunk(num_col)
@@ -426,7 +429,16 @@ class Shared_Memory {
             return *(std::begin(self) + i);
         }
 #ifdef __cpp_multidimensional_subscript
-        auto operator[](this auto& self, const std::size_t start, decltype(start) end) {
+        auto operator[](
+# ifndef __cpp_explicit_this_parameter
+            const std::size_t start, decltype(start) end
+        ) const {
+            auto& self = const_cast<Shared_Memory&>(*this);
+# else
+            this auto& self,
+            const std::size_t start, decltype(start) end
+        ) {
+# endif
             assert(start <= end && end <= std::size(self));
             return std::span{
                 std::begin(self) + start,
@@ -651,7 +663,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             else if constexpr (std::is_same_v<set_t<int>, std::unordered_set<int>>)
                 return false;
             else {
-#if __GNUC__ >= 14
+#if __GNUC__ >= 13  // P2593R1
                 static_assert(false, "只接受 ‘std::{,unordered_}set’ 作为注册表格式.");
 #elifdef __cpp_lib_unreachable
                 std::unreachable();
@@ -732,7 +744,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #endif
             if constexpr (!using_ordered_set)
                 this->last_inserted = std::to_address(
-#if __GNUC__ < 11 or __GNUC__ == 11 and __GNUC_MINOR__ < 3  // GCC 的 bug, 见 ipcator#2.
+#if __GNUC__ < 11  // GCC 的 bug, 见 ipcator#2.
                     &*
 #endif
                     inserted
@@ -791,12 +803,12 @@ class ShM_Resource: public std::pmr::memory_resource {
                 this->last_inserted = std::move(other.last_inserted);
         }
 
-#if !(__GNUC__ == 14 && __GNUC_MINOR__ == 2)
-        friend class ShM_Resource<std::set>;  // see below:
+#if __GNUC__ == 15 or __clang_major__ == 19  // ipcator#3
+        friend class ShM_Resource<std::set>;
 #endif
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) noexcept requires(using_ordered_set)
         : resources{[
-#if __GNUC__ == 14 && __GNUC_MINOR__ == 2
+#if __GNUC__ != 15 and __clang_major__ != 19  // ipcator#3
             other_resources=std::move(other).get_resources()
 #else
             &other_resources=other.resources
@@ -855,7 +867,11 @@ class ShM_Resource: public std::pmr::memory_resource {
             )
                 return std::as_const(self.resources);
             else
-                return std::move(self.resources);
+                return
+#ifdef __cpp_explicit_this_parameter
+                    std::move
+#endif
+                    (self.resources);
         }
 
         friend auto operator<<(std::ostream& out, const ShM_Resource& resrc)
@@ -934,7 +950,15 @@ struct std::formatter<ShM_Resource<set_t>> {
                 R":({{ "resources": {{ "|size|": {} }}, "constructor()": "ShM_Resource<std::set>" }}):",
                 std::make_format_args(size)
             );
-        else
+        else {
+            // 对于 ‘ShM_Resource<std::unordered_set>’, 因为有字段
+            // ‘last_inserted’ (指针), 必须保证它没有 dangling.
+            // 也就是, 得排除 ‘size’ 为 0 的情形.  这没有关系, 因为
+            // 查看一个空 ‘ShM_Resource’ 的 JSON 没什么意义.
+            assert(size);
+#if __has_cpp_attribute(assume)
+            [[assume(size)]];
+#endif
             return std::vformat_to(
                 context.out(),
                 R":({{
@@ -956,6 +980,7 @@ struct std::formatter<ShM_Resource<set_t>> {
                     *resrc.last_inserted
                 )
             );
+        }
     }
 };
 
@@ -1117,11 +1142,11 @@ struct ShM_Reader {
             );
         }
 
-        auto select_shm(const std::string_view name) noexcept -> const
-#if __GNUC__ == 14 && __GNUC_MINOR__ == 2
-            auto
-#else
+        auto select_shm(const std::string_view name) const noexcept ->
+#if __GNUC__ == 15 or __clang_major__ == 19  // ipcator#3
             Shared_Memory<false>
+#else
+            auto
 #endif
         & {
             if (
