@@ -1142,7 +1142,7 @@ struct ShM_Reader {
             );
         }
 
-        auto select_shm(const std::string_view name) const noexcept ->
+        auto select_shm(const std::string_view name) noexcept -> const
 #if __GNUC__ == 15 or __clang_major__ == 19  // ipcator#3
             Shared_Memory<false>
 #else
