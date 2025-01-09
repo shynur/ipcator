@@ -14,6 +14,8 @@ git clone -b fast --single-branch git@github.com:shynur/ipcator.git
 
 - Bash, `awk`, `sed`, `grep`.
 
+- `g++-10` 及以上, 或 `clang++-16` 及以上.
+
 - 直接执行 `make print-vars`, 不飘红就行; 否则, 根据提示设置正确的 编译器 和 C++ 标准.  <br />
   例如, 在我的机器上有报错: `g++: error: unrecognized command line option ‘-std=c++26’; did you mean ‘-std=c++2a’?`,
   说明编译器 (`g++-9`) 太旧导致有些选项无法识别, 而 C++ 标准太新, 可以折中一下, 重新执行

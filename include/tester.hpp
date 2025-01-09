@@ -29,7 +29,7 @@ struct Tester {
         Print_Fences pf = __func__;
 
         // 创建指定大小 (25 bytes) 的共享内存, 可读可写,
-        auto writer = 25_shm;
+        auto writer = "/ipcator-just-a-name"_shm[25];
         // 内核需要一个名字指代共享内存, 此处由 ipcator 自行取名, 确保唯一.
 
         writer[16] = 0x77;  // 设置第 16 个 byte.
@@ -45,9 +45,9 @@ struct Tester {
         Print_Fences pf = __func__;
 
         // 创建命名的指定大小的共享内存:
-        auto writer = "/will-be-removed-immediately"_shm[5];
+        auto writer = "/ipcator-will-be-removed-immediately"_shm[5];
         // 只读地打开它:
-        auto reader = +"/will-be-removed-immediately"_shm;
+        auto reader = -"/ipcator-will-be-removed-immediately"_shm;
 
         writer[2] = 0x42;
 
@@ -87,10 +87,10 @@ struct Tester {
     void shm_4() {
         Print_Fences pf = __func__;
 
-        auto writer_a = "/one-more-shm"_shm[7],
-             writer_b = "/yet-another-one"_shm[11];
+        auto writer_a = "/ipcator-one-more-shm"_shm[7],
+             writer_b = "/ipcator-yet-another-one"_shm[11];
 
-        Shared_Memory reader = std::string{"/one-more-shm"};
+        Shared_Memory reader = std::string{"/ipcator-one-more-shm"};
 
         swap(writer_a, writer_b);  // 交换所有权.
         writer_b[5] = 5;
@@ -109,13 +109,12 @@ struct Tester {
     void shm_5() {
         Print_Fences pf = __func__;
 
-        auto writer = "/one-shared-memory"_shm[10];
+        auto writer = "/ipcator-one-shared-memory"_shm[10];
         std::cout << "起始地址: " << writer.data() << ' '
                   << "或 " << (void *)&writer[0] << ", "
                   << "长度为: " << std::size(writer) << '\n';
 
-        auto reader = +"/one-shared-memory"_shm;
-        std::cout << (writer == reader ? "writer 和 reader 指向同一个共享内存对象" : "并不") << ".\n";
+        auto reader = -"/ipcator-one-shared-memory"_shm;
 
 #ifdef __cpp_lib_print
         std::println("writer 的 JSON 表示: {}", writer);
@@ -140,11 +139,11 @@ struct Tester {
     }
     void shm_benchmark(const unsigned times) {
         Print_Fences pf = __func__;
-        1_shm;  // 预热, 避免冷启动.
+        "/ipcator-tmp"_shm[1];  // 预热, 避免冷启动.
 
         const auto start = std::chrono::high_resolution_clock::now();
         for (auto _ : std::views::iota(0) | std::views::take(times)) {
-            auto&& writer = 8848_shm;
+            auto&& writer = "/ipcator-tmp"_shm[8848];
             Shared_Memory<false> reader_a = writer;
             // auto reader_b = reader_a;
         }
@@ -182,7 +181,7 @@ struct Tester {
 
         std::cout << (const std::string&)shm[50] << '\n';
 
-        std::move(rs).get_resources().emplace("/another-shm"_shm[996]);
+        std::move(rs).get_resources().emplace("/ipcator-another-shm"_shm[996]);
         // 将独立的 `Shared_Momory<true>` 交给 rs 托管.
 
         pf.hr();
@@ -211,7 +210,7 @@ struct Tester {
     template <class shmresrc_t>
     void shmresrc_benchmark(const unsigned times) {
         Print_Fences pf = __func__;
-        1_shm;  // 预热, 避免冷启动.
+        "/ipcator-tmp"_shm[1];  // 预热, 避免冷启动.
 
         shmresrc_t rs;
         const auto start = std::chrono::high_resolution_clock::now();
@@ -241,7 +240,7 @@ struct Tester {
     template <class pmr_resrc_t>
     void thrdunsafe_pmr_benchmark(const unsigned times) {
         Print_Fences pf = __func__;
-        1_shm;
+        "/ipcator-tmp"_shm[1];
 
         pmr_resrc_t rs;
         const auto start = std::chrono::high_resolution_clock::now();
