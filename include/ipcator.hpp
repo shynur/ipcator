@@ -71,7 +71,7 @@
 using namespace std::literals;
 
 
-namespace {
+inline namespace meta {
     constexpr auto DEBUG =
 #ifdef NDEBUG
         false
@@ -82,7 +82,7 @@ namespace {
 }
 
 
-namespace {
+inline namespace utils {
     /**
      * 将数字向上取整, 成为📄页表大小的整数倍.
      * 像这样设置共享内存的大小, 可以提高内存♻️利用率.
@@ -96,136 +96,16 @@ namespace {
 }
 
 
-namespace {
-    /**
-     * 给定 shared memory object 的名字, 创建/打开
-     * 📂 shm obj, 并将其映射到进程自身的地址空间中.
-     * - 对于 writer, 使用 `map_shm<true>(name,size)->unsigned char*`,
-     *   其中 ‘size’ 是要创建的 shm obj 的大小;
-     * - 对于 reader, 使用 `map_shm<>(name)->{addr,length}`;
-     *   若还要允许写, 使用 `map_shm<false,true>` (另见 ipcator#2).
-     */
-    template <bool creat = false
-#if __GNUC__ != 10  // g++-10 有 bug (ipcator#2).
-        , bool writable = creat
-#endif
-    >
-    constexpr auto map_shm = [](const auto resolve) consteval {
-#if __GNUC__ == 10  // ipcator#2
-        constexpr auto writable = true;
-#endif
-        return [=]
-#if __cplusplus >= 202302L
-            [[nodiscard]]
-#endif
-        (
-            const std::string& name, const std::unsigned_integral auto... size
-        ) requires(sizeof...(size) == creat) {
-
-            assert("/dev/shm"s.length() + name.length() <= 255);
-            const auto fd = [](const auto do_open) {
-                if constexpr (creat || !DEBUG)
-                    return do_open();
-                else /* !creat and DEBUG */ {
-                    std::future opening = std::async(
-                        [&] {
-                            while (true)
-                                if (const auto fd = do_open(); fd != -1)
-                                    return fd;
-                                else
-                                    std::this_thread::sleep_for(50ms);
-                        }
-                    );
-                    // 阻塞直至目标共享内存对象存在:
-                    if (opening.wait_for(0.5s) == std::future_status::ready) [[likely]]
-                        return opening.get();
-                    else
-                        assert(!"shm obj 仍未被创建, 导致 reader 等待超时");
-                }
-            }(std::bind(
-                shm_open,
-                name.c_str(),
-                (creat ? O_CREAT|O_EXCL : 0) | (writable ? O_RDWR : O_RDONLY),
-                0666
-            ));
-            assert(fd != -1);
-
-            if constexpr (creat) {
-                // 设置 shm obj 的大小:
-                const auto result_resize = ftruncate(
-                    fd,
-                    size...
-#ifdef __cpp_pack_indexing
-                           [0]
-#endif
-                );
-                assert(result_resize != -1);
-            }
-
-            return resolve(
-                fd,
-                [&] {
-                    if constexpr (creat)
-                        return
-#ifdef __cpp_pack_indexing
-                            size...[0]
-#else
-                            [](const auto size, ...) {return size;}(size...)
-#endif
-                        ;
-                    else {
-                        struct stat shm;
-                        do {
-                            fstat(fd, &shm);
-                        } while (DEBUG && shm.st_size == 0);  // 等到 creator resize 完 shm obj.
-                        return shm.st_size;
-                    }
-                }()
-            );
-        };
-    }([](const auto fd, const std::size_t size) {
-#if __GNUC__ == 10  // ipcator#2
-        constexpr auto writable = true;
-#endif
-        assert(size);
-#if __has_cpp_attribute(assume)
-            [[assume(size)]];
-#endif
-        const auto area_addr = (unsigned char *)mmap(
-            nullptr, size,
-            (writable ? PROT_WRITE : 0) | PROT_READ,
-            MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
-            fd, 0
-        );
-        close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
-        assert(area_addr != MAP_FAILED);
-
-        if constexpr (creat)
-            return area_addr;
-        else {
-            const struct {
-                std::conditional_t<
-                    writable,
-                    unsigned char, const unsigned char
-                > *const addr;
-                const std::size_t length;
-            } area{area_addr, size};
-            return area;
-        }
-    });
-}
-
-
 /**
  * 表示1️⃣块被映射的共享内存区域.
- * 对于 writer, 它还拥有对应的共享内存对象的所有权.
+ * 对于 creator, 它还拥有对应的共享内存对象的所有权.
  */
-template <bool creat>
+template <bool creat, auto writable = creat>
 class Shared_Memory {
         std::string name;  // Shared memory object 的名字, 格式为 “/Abc123”.
         std::span<
             std::conditional_t<
-                creat,
+                writable,
                 unsigned char,
                 const unsigned char
             >
@@ -237,16 +117,11 @@ class Shared_Memory {
          */
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
-            map_shm<creat>(name, size),
+            Shared_Memory::map_shm(name, size),
             size,
         } {
-            if constexpr (DEBUG) {
-                // 既读取又写入✏, 以确保这块内存被正确地映射了, 且已取得读写权限.
-                for (auto& byte : this->area)
-                    byte ^= byte;
-
+            if constexpr (DEBUG)
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m", *this) + '\n';
-            }
         }
         /**
          * 根据名字打开对应的 shm obj, 并映射到进程的地址空间中.  不允许 reader
@@ -260,23 +135,12 @@ class Shared_Memory {
                ()
 #endif
             -> decltype(this->area) {
-                const auto [addr, length] = map_shm<>(name);
+                const auto [addr, length] = Shared_Memory::map_shm(name);
                 return {addr, length};
             }()
         } {
-            if constexpr (DEBUG) {
-                // 只读取, 以确保这块内存被正确地映射了, 且已取得读权限.
-                for (auto byte : std::as_const(this->area))
-                    std::ignore =
-#ifdef __cpp_auto_cast
-                        auto{byte}
-#else
-                        decltype(byte){byte}
-#endif
-                    ;
-
+            if constexpr (DEBUG)
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
-            }
         }
         Shared_Memory(Shared_Memory&& other) noexcept
         : name{std::move(other.name)}, area{
@@ -287,19 +151,20 @@ class Shared_Memory {
         /**
          * 在进程地址空间的另一处映射一个相同的 shm obj.
          */
-        Shared_Memory(const Shared_Memory& other) requires(!creat)
-        : Shared_Memory{other.name} {
+        template <bool other_creates, bool writable_other>
+            requires(writable ? writable_other : true)
+        Shared_Memory(const Shared_Memory<other_creates, writable_other>& other)
+        requires(!creat): Shared_Memory{other.get_name()} {
             // 单个进程手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
             // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
             // 的地址 (‘area’) 相同.  对于
             //   ```Shared_Memory a, b;```
             // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
         }
-        /**
-         * 在进程地址空间的另一处映射一个相同的 shm obj, 只读模式.
-         */
-        Shared_Memory(const Shared_Memory<!creat>& other) requires(!creat)
-        : Shared_Memory{other.get_name()} { /* 同上 */ }
+        Shared_Memory(const Shared_Memory& other)
+        requires(!creat): Shared_Memory{other.get_name()} {
+            // 同上.  但是 copy constructor 必须显式声明.
+        }
         friend void swap(Shared_Memory& a, decltype(a) b) noexcept {
             std::swap(a.name, b.name);
             std::swap(a.area, b.area);
@@ -334,29 +199,127 @@ class Shared_Memory {
         }
 
         auto& get_name() const { return this->name; }
-        auto get_area(
+        const auto& get_area(
 #ifndef __cpp_explicit_this_parameter
-        ) const -> const auto& {
+        ) const {
             auto& self = const_cast<Shared_Memory&>(*this);
 #else
             this auto& self
-        ) -> decltype(auto) {
+        ) {
 #endif
-            if constexpr (!creat)
-                return std::as_const(self.area);
+            if constexpr (!writable)
+                return self.area;
             else
-                if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>)
-                    return std::span<const unsigned char>(self.area);
-                else
-                    return std::as_const(self.area);
+                if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+                    return reinterpret_cast<const std::span<const unsigned char>&>(self.area);
+#pragma GCC diagnostic pop
+                } else
+                    return self.area;
         }
 
         /**
-         * 只要内存区域是由同一个 shm obj 映射而来 (即 同名), 就视为相等.
+         * 给定 shared memory object 的名字, 创建/打开
+         * 📂 shm obj, 并将其映射到进程自身的地址空间中.
          */
-        template <bool other_creat>
-        auto operator==(const Shared_Memory<other_creat>& other) const {
-            return this->get_name() == other.get_name();
+#if __cplusplus >= 202302L
+        [[nodiscard]]
+#endif
+        static auto map_shm(
+            const std::string& name, const std::unsigned_integral auto... size
+        ) requires(sizeof...(size) == creat) {
+            assert("/dev/shm"s.length() + name.length() <= 255);
+            const auto fd = [](const auto do_open) {
+                if constexpr (creat || !DEBUG)
+                    return do_open();
+                else /* !creat and DEBUG */ {
+                    std::future opening = std::async(
+                        [&] {
+                            while (true)
+                                if (const auto fd = do_open(); fd != -1)
+                                    return fd;
+                                else
+                                    std::this_thread::sleep_for(50ms);
+                        }
+                    );
+                    // 阻塞直至目标共享内存对象存在:
+                    if (opening.wait_for(0.5s) == std::future_status::ready)
+                        [[likely]] return opening.get();
+                    else
+                        assert(!"shm obj 仍未被创建, 导致 reader 等待超时");
+                }
+            }(std::bind(
+                shm_open,
+                name.c_str(),
+                (creat ? O_CREAT|O_EXCL : 0) | (writable ? O_RDWR : O_RDONLY),
+                0666
+            ));
+            assert(fd != -1);
+
+            if constexpr (creat) {
+                // 设置 shm obj 的大小:
+                const auto result_resize = ftruncate(
+                    fd,
+                    size...
+#ifdef __cpp_pack_indexing
+                           [0]
+#endif
+                );
+                assert(result_resize != -1);
+            }
+
+            return [
+                fd, size=[&] {
+                    if constexpr (creat)
+                        return
+#ifdef __cpp_pack_indexing
+                            size...[0]
+#else
+                            [](auto size, ...) { return size; }(size...)
+#endif
+                        ;
+                    else {
+                        struct stat shm;
+                        do {
+                            fstat(fd, &shm);
+                        } while (DEBUG && shm.st_size == 0);  // 等到 creator resize 完 shm obj.
+                        return shm.st_size +
+#ifdef __cpp_size_t_suffix
+                            0zu
+#else
+                            0ull
+#endif
+                        ;
+                    }
+                }()
+            ] {
+                assert(size);
+#if __has_cpp_attribute(assume)
+                [[assume(size)]];
+#endif
+                const auto area_addr = (unsigned char *)mmap(
+                    nullptr, size,
+                    (writable ? PROT_WRITE : 0) | PROT_READ,
+                    MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
+                    fd, 0
+                );
+                close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
+                assert(area_addr != MAP_FAILED);
+
+                if constexpr (creat)
+                    return area_addr;
+                else {
+                    const struct {
+                        std::conditional_t<
+                            writable,
+                            unsigned char, const unsigned char
+                        > *const addr;
+                        const std::size_t length;
+                    } area{area_addr, size};
+                    return area;
+                }
+            }();
         }
 
         /**
@@ -497,8 +460,8 @@ static_assert(
     && std::ranges::sized_range<Shared_Memory<false>>
 );
 
-template <auto creat>
-struct std::formatter<Shared_Memory<creat>> {
+template <auto creat, auto writable>
+struct std::formatter<Shared_Memory<creat, writable>> {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
             throw std::format_error("不支持任何格式化动词.");
@@ -512,9 +475,15 @@ struct std::formatter<Shared_Memory<creat>> {
 #endif
         consteval {
             if (creat)
-                return "Shared_Memory<creat=true>";
+                if (writable)
+                    return "Shared_Memory<creat=true,writable=true>";
+                else
+                    return "Shared_Memory<creat=true,writable=false>";
             else
-                return "Shared_Memory<creat=false>";
+                if (writable)
+                    return "Shared_Memory<creat=false,writable=true>";
+                else
+                    return "Shared_Memory<creat=false,writable=false>";
         }();
         const auto addr = (const void *)std::data(shm.get_area());
         const auto length = std::size(shm.get_area());
@@ -543,30 +512,28 @@ struct std::formatter<Shared_Memory<creat>> {
 
 
 /**
- * 创建 指定大小的 名字随机生成的 shm obj, 以读写模式映射.
- */
-auto operator""_shm(const unsigned long long size);
-/**
  * - ‘"/name"_shm[size]’ 创建 指定大小的命名 shm obj, 以读写模式映射.
- * - ‘+"/name"_shm’ 将命名的 shm obj 以只读模式映射至本地.
+ * - ‘+"/name"_shm’ 不创建, 只将命名的 shm obj 以读写模式映射至本地.
+ * - ‘-"/name"_shm’ 不创建, 只将命名的 shm obj 以只读模式映射至本地.
  */
 auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
     struct ShM_Constructor_Proxy {
         const char *const name;
         auto operator[](const std::size_t size) const {
-            auto&& rdwr_shm = Shared_Memory{name, size};
-            return std::move(rdwr_shm);
+            return Shared_Memory{name, size};
         }
         auto operator+() const {
-            auto&& rdonly_shm = Shared_Memory{name};
-            return rdonly_shm;
+            return Shared_Memory<false, true>{name};
+        }
+        auto operator-() const {
+            return Shared_Memory<false>{name};
         }
     };
     return ShM_Constructor_Proxy{name};
 }
 
 
-namespace {
+inline namespace utils {
     /**
      * 创建一个全局唯一的名字提供给 shm obj.  该名字由
      *      固定前缀 + 计数字段 + 独属进程的后缀
@@ -629,9 +596,6 @@ namespace {
 
         return '/' + base_name + '.' + suffix;
     }
-}
-auto operator""_shm(const unsigned long long size) {
-    return Shared_Memory{generate_shm_UUName(), size};
 }
 
 
@@ -803,12 +767,12 @@ class ShM_Resource: public std::pmr::memory_resource {
                 this->last_inserted = std::move(other.last_inserted);
         }
 
-#if __GNUC__ == 15 || __clang_major__ == 19 || __clang_major__ == 20  // ipcator#3
+#if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 20)  // ipcator#3
         friend class ShM_Resource<std::set>;
 #endif
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
         : resources{[
-#if __GNUC__ != 15 && __clang_major__ != 19 && __clang_major__ != 20  // ipcator#3
+#if __GNUC__ != 15 && (__clang_major__ < 16 || 20 < __clang_major__)  // ipcator#3
             other_resources=std::move(other).get_resources()
 #else
             &other_resources=other.resources
@@ -1141,7 +1105,7 @@ struct ShM_Reader {
         }
 
         auto select_shm(const std::string_view name) -> const
-#if __GNUC__ == 15 or __clang_major__ == 19 or __clang_major__ == 20  // ipcator#3
+#if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 20)  // ipcator#3
             Shared_Memory<false>
 #else
             auto
