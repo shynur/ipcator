@@ -2,7 +2,7 @@
 
 提供 POSIX-compatible 的共享内存分配器与读取器.
 
-执行 `make doc` 以生成文档 (在 `docs/html/`).
+**执行 `make doc` 以生成文档 (在 `docs/html/`).**
 
 ## 下载
 
