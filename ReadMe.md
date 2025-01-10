@@ -2,6 +2,8 @@
 
 提供 POSIX-compatible 的共享内存分配器与读取器.
 
+执行 `make doc` 以生成文档 (在 `docs/html/`).
+
 ## 下载
 
 ```bash
@@ -12,7 +14,7 @@ git clone -b master --single-branch git@github.com:shynur/ipcator.git
 
 ### 工具链要求
 
-- Bash, `awk`, `sed`, `grep`.
+- Bash, `awk`, `sed`, `grep`, Doxygen.
 
 - `g++-10` 及以上, 或 `clang++-16` 及以上.
 

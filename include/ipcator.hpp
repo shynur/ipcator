@@ -71,21 +71,19 @@
 using namespace std::literals;
 
 
-inline namespace meta {
-    constexpr auto DEBUG =
+constexpr auto DEBUG_ =
 #ifdef NDEBUG
-        false
+    false
 #else
-        true
+    true
 #endif
-    ;
-}
+;
 
 
 inline namespace utils {
     /**
-     * 将数字向上取整, 成为📄页表大小的整数倍.
-     * 像这样设置共享内存的大小, 可以提高内存♻️利用率.
+     * @brief 将数字向上取整, 成为📄页表大小的整数倍.
+     * @details 用该返回值设置共享内存的大小, 可以提高内存♻️利用率.
      */
     inline auto ceil_to_page_size(const std::size_t min_length)
     -> std::size_t {
@@ -97,12 +95,18 @@ inline namespace utils {
 
 
 /**
- * 表示1️⃣块被映射的共享内存区域.
- * 对于 creator, 它还拥有对应的共享内存对象的所有权.
+ * @tparam creat 是否新建文件, 用来作为共享内存
+ * @tparam writable 是否允许在共享内存区域写数据
+ * @brief 对由指定目标文件映射而来的内存区域的抽象
+ * @details 当前的共享内存模型是:
+ *          writer 创建一个文件, 接着将它映射到内存中, writer 对这块共享内存默认是可读可写的;
+ *          reader 通过 writer 创建的文件名找到目标文件, 然后将其映射至自身进程中, 默认只读.
+ * @note 文档约定: 称 `Shared_Memory` **[*creat*=true]** 实例为 writer,
+ *                    `Shared_Memory` **[*creat*=false]** 实例为 reader.
  */
 template <bool creat, auto writable = creat>
 class Shared_Memory {
-        std::string name;  // Shared memory object 的名字, 格式为 “/Abc123”.
+        std::string name;
         std::span<
             std::conditional_t<
                 writable,
@@ -112,21 +116,31 @@ class Shared_Memory {
         > area;
     public:
         /**
-         * 创建名字为 ‘name’ (用 ‘generate_shm_UUName’ 自动生成最方便), 大小为 ‘size’
-         * (建议用 ‘ceil_to_page_size’ 向上取整) 的共享内存对象, 并映射到进程的地址空间中.
+         * @brief 作为 writer 创建一块共享内存 并 映射到 RAM 中, 可供其它进程读写.
+         * @param name 共享内存是被映射到 RAM 中的文件, 这是目标文件名.
+         *             形如 `/斜杠打头-没有空格`.  建议使用 `generate_shm_UUName()`
+         *             自动生成该路径名.
+         * @param size 目标文件的大小.  空间♻️利用率最高的做法是和📄页表对齐,
+         *             建议使用 `ceil_to_page_size(std::size_t)` 自动生成.
          */
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
             Shared_Memory::map_shm(name, size),
             size,
         } {
-            if constexpr (DEBUG)
+            if constexpr (DEBUG_)
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m", *this) + '\n';
         }
         /**
-         * 根据名字打开对应的 shm obj, 并映射到进程的地址空间中.  不允许 reader
-         * 指定 ‘size’, 因为这是🈚意义的.  Reader 打开的是已经存在于内存中的
-         * shm obj, 占用大小已经确定, 更小的 ‘size’ 并不能节约系统资源.
+         * @brief 作为 reader 打开📂一份文件, 将其映射到 RAM 中.
+         * @param name 指定目标文件的路径.  这个路径通常是事先约定的,
+         *             或者从其它实例的 `Shared_Memory::get_name()` 方法获取.
+         * @details Reader 无法指定 ‘size’, 因为这是🈚意义的.  Reader 打开的是
+         *          已经存在于 RAM 中的目标文件, 占用大小已经确定, 更小的 ‘size’
+         *          并不能节约系统资源.
+         *          Reader 也可能允许向共享内存写入数据, 要求由
+         *          `Shared_Memory` **[writable=true]** 构造.
+         * @note 没有定义 `NDEBUG` 宏时, reader 会等待 (片刻) 直至目标文件被 writer 创建.
          */
         Shared_Memory(const std::string name) requires(!creat)
         : name{name}, area{
@@ -139,9 +153,12 @@ class Shared_Memory {
                 return {addr, length};
             }()
         } {
-            if constexpr (DEBUG)
+            if constexpr (DEBUG_)
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
         }
+        /**
+         * @brief 实现移动语义.
+         */
         Shared_Memory(Shared_Memory&& other) noexcept
         : name{std::move(other.name)}, area{
             // Self 的析构函数靠 ‘area’ 是否为空来判断
@@ -149,35 +166,41 @@ class Shared_Memory {
             std::exchange(other.area, {})
         } {}
         /**
-         * 在进程地址空间的另一处映射一个相同的 shm obj.
+         * @brief 在进程中映射和 `other` 相同的目标文件.
+         * @details 这两块共享内存的数据是同步的, 但地址不同.
+         * @note `Shared_Memory` **[writable=true]** 无法从 `Shared_Memory` **[writable=false]** 拷贝构造.
          */
         template <bool other_creates, bool writable_other>
             requires(writable ? writable_other : true)
         Shared_Memory(const Shared_Memory<other_creates, writable_other>& other)
-        requires(!creat): Shared_Memory{other.get_name()} {
-            // 单个进程手上的多个 ‘Shared_Memory’ 可以标识同一个 shared memory object,
-            // 它们由 复制构造 得来.  但这不代表它们的从 shared memory object 映射得到
-            // 的地址 (‘area’) 相同.  对于
-            //   ```Shared_Memory a, b;```
-            // 若 a == b, 则恒有 a.pretty_memory_view() == b.pretty_memory_view().
-        }
+            requires(!creat): Shared_Memory{other.get_name()} {}
+        /**
+         * @brief 同上.
+         * @note Writer 之间是无法拷贝构造的, 仅允许移动.
+         */
         Shared_Memory(const Shared_Memory& other)
-        requires(!creat): Shared_Memory{other.get_name()} {
+            requires(!creat): Shared_Memory{other.get_name()} {
             // 同上.  但是 copy constructor 必须显式声明.
         }
+        /**
+         * @brief 交换两个实例.
+         */
         friend void swap(Shared_Memory& a, decltype(a) b) noexcept {
             std::swap(a.name, b.name);
             std::swap(a.area, b.area);
         }
         /**
-         * 映射等号与右侧同名的 shm obj, 左侧原有的 shm obj 被回收.
+         * @brief 赋值语义.  左侧实例原本持有的共享内存区域会被卸载.
          */
         auto& operator=(Shared_Memory other) {
             swap(*this, other);
             return *this;
         }
         /**
-         * 取消映射, 并在 shm obj 的被映射数目为 0 的时候自动销毁它.
+         * @brief 将被映射的共享内存区域从自身进程中卸载.
+         * @details 在 writer 卸载共享内存块之后, 其它 reader 仍可访问这片区域,
+         *          但任何进程无法再执行新的映射 (即 创建新的 reader).  当 all
+         *          the readers 也析构掉了, 目标文件的引用计数归零, 将被释放.
          */
         ~Shared_Memory() noexcept {
             if (std::data(this->area) == nullptr)
@@ -194,10 +217,13 @@ class Shared_Memory {
                 std::size(this->area)
             );
 
-            if constexpr (DEBUG)
+            if constexpr (DEBUG_)
                 std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m", *this) + '\n';
         }
 
+        /**
+         * @brief 返回路径名, which is 共享内存区域对应的目标文件的路径.
+         */
         auto& get_name() const { return this->name; }
         const auto& get_area(
 #ifndef __cpp_explicit_this_parameter
@@ -219,10 +245,6 @@ class Shared_Memory {
                     return self.area;
         }
 
-        /**
-         * 给定 shared memory object 的名字, 创建/打开
-         * 📂 shm obj, 并将其映射到进程自身的地址空间中.
-         */
 #if __cplusplus >= 202302L
         [[nodiscard]]
 #endif
@@ -231,9 +253,9 @@ class Shared_Memory {
         ) requires(sizeof...(size) == creat) {
             assert("/dev/shm"s.length() + name.length() <= 255);
             const auto fd = [](const auto do_open) {
-                if constexpr (creat || !DEBUG)
+                if constexpr (creat || !DEBUG_)
                     return do_open();
-                else /* !creat and DEBUG */ {
+                else /* !creat and DEBUG_ */ {
                     std::future opening = std::async(
                         [&] {
                             while (true)
@@ -283,7 +305,7 @@ class Shared_Memory {
                         struct stat shm;
                         do {
                             fstat(fd, &shm);
-                        } while (DEBUG && shm.st_size == 0);  // 等到 creator resize 完 shm obj.
+                        } while (DEBUG_ && shm.st_size == 0);  // 等到 creator resize 完 shm obj.
                         return shm.st_size +
 #ifdef __cpp_size_t_suffix
                             0zu
@@ -323,8 +345,10 @@ class Shared_Memory {
         }
 
         /**
-         * 🖨️ 打印 shm 区域的内存布局到一个字符串.  每行有 ‘num_col’
-         * 个字节, 每个字节的 16 进制表示之间, 用 ‘space’ 填充.
+         * @brief 🖨️ 打印内存布局到一个字符串.  调试用.
+         * @details 一个造型是多行多列的矩阵, 每个元素用 16 进制表示对应的 byte.
+         * @param num_col 列数
+         * @param space 每个 byte 之间的填充字符串
          */
         auto pretty_memory_view(
             const std::size_t num_col = 16, const std::string_view space = " "
@@ -371,7 +395,8 @@ class Shared_Memory {
         }
 
         /**
-         * 将该实例自身的属性以类似 JSON 的格式输出.
+         * @brief 将 self 以类似 JSON 的格式输出.  调试用.
+         * @note 也可用 `std::println("{}", self)` 打印 (since C++23).
          */
         friend auto operator<<(std::ostream& out, const Shared_Memory& shm)
         -> decltype(auto) {
@@ -379,6 +404,11 @@ class Shared_Memory {
         }
 
         /* impl std::ranges::range for Self */
+        /**
+         * @brief 获取指定位置的 byte 的引用.
+         * @note Reader 在默认情况下只能用 `const&` 接收该引用,
+         *       这个检查发生在编译期, 因此误用会导致编译出错.
+         */
         auto& operator[](
 #ifndef __cpp_explicit_this_parameter
             const std::size_t i
@@ -410,7 +440,7 @@ class Shared_Memory {
         }
 #endif
         /**
-         * 被映射的起始地址.
+         * @brief 共享内存区域的首地址.
          */
         auto data(
 #ifndef __cpp_explicit_this_parameter
@@ -422,6 +452,9 @@ class Shared_Memory {
 #endif
             return std::to_address(std::begin(self));
         }
+        /**
+         * @brief 迭代器, 按 byte 遍历共享内存区域.
+         */
         auto begin(
 #ifndef __cpp_explicit_this_parameter
         ) const {
@@ -432,6 +465,9 @@ class Shared_Memory {
 #endif
             return std::begin(self.get_area());
         }
+        /**
+         * @brief 迭代器, 按 byte 遍历共享内存区域.
+         */
         auto end(
 #ifndef __cpp_explicit_this_parameter
         ) const {
@@ -443,7 +479,7 @@ class Shared_Memory {
             return std::begin(self) + std::size(self);
         }
         /**
-         * 映射的区域大小.
+         * @brief 共享内存区域的长度.
          */
         auto size() const { return std::size(this->area); }
 };
@@ -461,7 +497,11 @@ static_assert(
 );
 
 template <auto creat, auto writable>
-struct std::formatter<Shared_Memory<creat, writable>> {
+struct
+#if !(defined __GNUG__ && __GNUC__ <= 15)
+    ::
+#endif
+    std::formatter<Shared_Memory<creat, writable>> {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
             throw std::format_error("不支持任何格式化动词.");
@@ -511,33 +551,40 @@ struct std::formatter<Shared_Memory<creat, writable>> {
 };
 
 
-/**
- * - ‘"/name"_shm[size]’ 创建 指定大小的命名 shm obj, 以读写模式映射.
- * - ‘+"/name"_shm’ 不创建, 只将命名的 shm obj 以读写模式映射至本地.
- * - ‘-"/name"_shm’ 不创建, 只将命名的 shm obj 以只读模式映射至本地.
- */
-auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
-    struct ShM_Constructor_Proxy {
-        const char *const name;
-        auto operator[](const std::size_t size) const {
-            return Shared_Memory{name, size};
-        }
-        auto operator+() const {
-            return Shared_Memory<false, true>{name};
-        }
-        auto operator-() const {
-            return Shared_Memory<false>{name};
-        }
-    };
-    return ShM_Constructor_Proxy{name};
+inline namespace literals {
+    /**
+     * @brief 创建 `Shared_Memory` 实例的快捷方式.
+     * @details
+     * - `"/filename"_shm[size]`: 创建指定大小的命名的共享内存, 以读写模式映射.
+     * - `+"/filename"_shm`: 不创建, 只将目标文件以读写模式映射至本地.
+     * - `-"/filename"_shm`: 不创建, 只将目标文件以只读模式映射至本地.
+     */
+    auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
+        struct ShM_Constructor_Proxy {
+            const char *const name;
+            auto operator[](const std::size_t size) const {
+                return Shared_Memory{name, size};
+            }
+            auto operator+() const {
+                return Shared_Memory<false, true>{name};
+            }
+            auto operator-() const {
+                return Shared_Memory<false>{name};
+            }
+        };
+        return ShM_Constructor_Proxy{name};
+    }
 }
 
 
 inline namespace utils {
     /**
-     * 创建一个全局唯一的名字提供给 shm obj.  该名字由
-     *      固定前缀 + 计数字段 + 独属进程的后缀
-     * 组成.
+     * @brief 创建一个 **全局唯一** 的路径名, 不知道该给共享内存起什么名字时就用它.
+     * @see Shared_Memory::Shared_Memory(std::string, std::size_t)
+     * @note 格式为 `/固定前缀-原子自增的计数字段-进程专属的标识符`
+     * @details 名字的长度为 248, 加上偏移量 (`std::size_t`) 后正好 256.
+     *          248 足够大, 使得重名率几乎为 0; 256 刚好可以对齐, 提高
+     *          传递消息 (目标内存 + 偏移量) 的速度.
      */
     auto generate_shm_UUName() noexcept {
         constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator";
@@ -600,7 +647,7 @@ inline namespace utils {
 
 
 #define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  void(  \
-    DEBUG && std::clog <<  \
+    DEBUG_ && std::clog <<  \
         std::source_location::current().function_name() + "\n"s  \
         + std::vformat(  \
             (color == "green"sv ? "\033[32m" : "\033[31m")  \
@@ -803,7 +850,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             return *this;
         }
         ~ShM_Resource() noexcept {
-            if constexpr (DEBUG) {
+            if constexpr (DEBUG_) {
                 // 显式删除以触发日志输出.
                 while (!std::empty(this->resources)) {
                     const auto& area = std::cbegin(this->resources)->get_area();
@@ -882,7 +929,11 @@ static_assert( std::movable<ShM_Resource<std::unordered_set>> );
 
 
 template <template <typename... T> class set_t>
-struct std::formatter<ShM_Resource<set_t>> {
+struct
+#if !(defined __GNUG__ && __GNUC__ <= 15)
+    ::
+#endif
+    std::formatter<ShM_Resource<set_t>> {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
             throw std::format_error("不支持任何格式化动词.");

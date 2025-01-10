@@ -80,12 +80,20 @@ git:
 	git commit -av
 	git push
 
+.PHONY: doc
+doc:  docs/html/index.html
+	@echo $$'\033[32m文档在 $<\033[0m'
+docs/html/index.html:  docs/Doxyfile.ini include/ipcator.hpp | docs/
+	cd docs;  \
+	doxygen $(<F)
+
 .PHONY: clean
 clean:
 	rm -rf bin/
 	rm -f  /dev/shm/*ipcator-?*
 	rm -rf lib/?*-build/
 	rm -rf lib/archives/
+	rm -rf docs/html/
 
 # 查看一些 Makefile 中定义的变量.
 .PHONY: print-vars
