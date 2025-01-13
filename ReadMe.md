@@ -14,7 +14,9 @@ git clone -b master --single-branch git@github.com:shynur/ipcator.git
 
 ### 工具链要求
 
-- Bash, `awk`, `sed`, `grep`, Doxygen.
+- Bash, `awk`, `sed`, `grep`.
+
+- Doxygen, Graphviz.
 
 - `g++-10` 及以上, 或 `clang++-16` 及以上.
 

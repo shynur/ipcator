@@ -122,6 +122,11 @@ class Shared_Memory {
          *             自动生成该路径名.
          * @param size 目标文件的大小.  空间♻️利用率最高的做法是和📄页表对齐,
          *             建议使用 `ceil_to_page_size(std::size_t)` 自动生成.
+         * @note 该构造函数会推导类的模板实参, 不要手写:
+         * ```
+         * Shared_Memory shm{"/some-shared-object", 256};
+         * static_assert( std::is_same_v<decltype(shm), Shared_Memory<true, true>> );
+         * ```
          */
         Shared_Memory(const std::string name, const std::size_t size) requires(creat)
         : name{name}, area{
@@ -141,6 +146,11 @@ class Shared_Memory {
          *          Reader 也可能允许向共享内存写入数据, 要求由
          *          `Shared_Memory` **[writable=true]** 构造.
          * @note 没有定义 `NDEBUG` 宏时, reader 会等待 (片刻) 直至目标文件被 writer 创建.
+         * @note 该构造函数会推导类的模板实参, 不要手写:
+         * ```
+         * Shared_Memory shm{"/some-shared-object"};
+         * static_assert( std::is_same_v<decltype(shm), Shared_Memory<false, false>> );
+         * ```
          */
         Shared_Memory(const std::string name) requires(!creat)
         : name{name}, area{
@@ -171,7 +181,7 @@ class Shared_Memory {
          * @note `Shared_Memory` **[writable=true]** 无法从 `Shared_Memory` **[writable=false]** 拷贝构造.
          */
         template <bool other_creates, bool writable_other>
-            requires(writable ? writable_other : true)
+            requires(!writable || writable && writable_other)
         Shared_Memory(const Shared_Memory<other_creates, writable_other>& other)
             requires(!creat): Shared_Memory{other.get_name()} {}
         /**
@@ -555,9 +565,18 @@ inline namespace literals {
     /**
      * @brief 创建 `Shared_Memory` 实例的快捷方式.
      * @details
-     * - `"/filename"_shm[size]`: 创建指定大小的命名的共享内存, 以读写模式映射.
-     * - `+"/filename"_shm`: 不创建, 只将目标文件以读写模式映射至本地.
-     * - `-"/filename"_shm`: 不创建, 只将目标文件以只读模式映射至本地.
+     * - 创建指定大小的命名的共享内存, 以读写模式映射:
+     *   ```
+     *   auto writer = "/filename"_shm[size];
+     *   ```
+     * - 不创建, 只将目标文件以读写模式映射至本地:
+     *   ```
+     *   auto writable_reader = +"/filename"_shm;
+     *   ```
+     * - 不创建, 只将目标文件以只读模式映射至本地:
+     *   ```
+     *   auto reader = -"/filename"_shm;
+     *   ```
      */
     auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
         struct ShM_Constructor_Proxy {
@@ -581,7 +600,7 @@ inline namespace utils {
     /**
      * @brief 创建一个 **全局唯一** 的路径名, 不知道该给共享内存起什么名字时就用它.
      * @see Shared_Memory::Shared_Memory(std::string, std::size_t)
-     * @note 格式为 `/固定前缀-原子自增的计数字段-进程专属的标识符`
+     * @note 格式为 `/固定前缀-原子自增的计数字段-进程专属的标识符`.
      * @details 名字的长度为 248, 加上偏移量 (`std::size_t`) 后正好 256.
      *          248 足够大, 使得重名率几乎为 0; 256 刚好可以对齐, 提高
      *          传递消息 (目标内存 + 偏移量) 的速度.
@@ -658,12 +677,19 @@ inline namespace utils {
 
 
 /**
- * 按需创建并拥有若干 ‘Shared_Memory<true>’,
- * 以向⬇️游提供 shm 页面作为 memory resource.
+ * @brief Allocator: 给⬇️游分配共享内存块.  本质上是一系列 `Shared_Memory<true>` 的集合.
+ * @details 粗粒度的共享内存分配器, 每次固定分配单块共享内存.  持有所有权.
+ * @tparam set_t 用来存储 `Shared_Memory<true>` 的集合类型.  可选值:
+ *         - `std::set`: 给定任意的对象指针, 可以 **快速** 确定
+ *                       该对象位于哪块 `Shared_Memory<true>` 上.
+ *                       (See `ShM_Resource::find_arena`.)
+ *         - `std::unordered_set`: 记录最近一次分配的共享内存的首地址.
+ *                                 (See `ShM_Resource::last_inserted`.)
  */
 template <template <typename... T> class set_t = std::set>
 class ShM_Resource: public std::pmr::memory_resource {
     public:
+        /// @cond 请 Doxygen 忽略该变量, 因为它总是显示初始值 (而我不想这样).
         static constexpr bool using_ordered_set = []
 #if __cplusplus <= 202002L
             ()
@@ -685,7 +711,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 return bool{};
 #endif
             }
-        }();
+        }();  /// @endcond
     private:
         struct ShM_As_Addr {
             using is_transparent = int;
@@ -724,6 +750,23 @@ class ShM_Resource: public std::pmr::memory_resource {
         > resources;
 
     protected:
+        /**
+         * @brief 分配共享内存块.
+         * @param size 要分配的 `Shared_Memory` 的大小.
+         * @param alignment 共享内存对象映射到地址空间时的对齐要求.  可选.
+         * @details 每次调用该函数, 都会创建 **一整块** 新的 `Shared_Memory<true>`.
+         *          因此这是粒度最粗的分配器.
+         * @return 分配到的共享内存块的首地址.
+         * @note 一般不直接调用此函数, 而是:
+         * ```
+         * auto allocator = ShM_Resource<std::set>{};
+         * auto _ = allocator.allocate(12); _ = allocator.allocate(34, 8);
+         * //                 ^^^^^^^^                    ^^^^^^^^
+         * allocator = ShM_Resource<std::unordered_set>{};
+         * _ = allocator.allocate(56), _ = allocator.allocate(78, 16);
+         * //            ^^^^^^^^                    ^^^^^^^^
+         * ```
+         */
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
         ) noexcept(false) override {
@@ -767,8 +810,25 @@ class ShM_Resource: public std::pmr::memory_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
+        /**
+         * @brief 回收共享内存.
+         * @param area 要回收的共享内存的起始地址.
+         * @param size 若定义了 `NDEBUG` 宏, 传入任意值即可; 否则,
+         *             表示共享内存的大小, 必须与请求分配 (`allocate`)
+         *             时的大小 (`size`) 一致.
+         * @param alignment 传入随意值即可.
+         * @note 一般不直接调用此函数, 而是:
+         * ```
+         * auto allocator = ShM_Resource<std::set>{};
+         * auto addr = allocator.allocate(4096);
+         * allocator.deallocate(addr, 0, 0);
+         * //        ^^^^^^^^^^
+         * ```
+         */
         void do_deallocate(
-            void *const area, const std::size_t size, const std::size_t alignment [[maybe_unused]]
+            void *const area,
+            const std::size_t size [[maybe_unused]],
+            const std::size_t alignment [[maybe_unused]]
         ) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
@@ -805,7 +865,13 @@ class ShM_Resource: public std::pmr::memory_resource {
         }
 
     public:
+        /**
+         * @brief 构造函数.
+         */
         ShM_Resource() noexcept = default;
+        /**
+         * @brief 实现移动语义.
+         */
         ShM_Resource(ShM_Resource&& other) noexcept
         : resources{
             std::move(other.resources)
@@ -817,6 +883,14 @@ class ShM_Resource: public std::pmr::memory_resource {
 #if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 20)  // ipcator#3
         friend class ShM_Resource<std::set>;
 #endif
+        /**
+         * @brief 同上.
+         * @details `ShM_Resource<std::set>` 从 `ShM_Resource<std::unordered_set>` 移动构造:
+         * ```
+         * ShM_Resource<std::unordered_set> a;
+         * ShM_Resource<std::set> b{std::move(a)};
+         * ```
+         */
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
         : resources{[
 #if __GNUC__ != 15 && (__clang_major__ < 16 || 20 < __clang_major__)  // ipcator#3
@@ -825,7 +899,11 @@ class ShM_Resource: public std::pmr::memory_resource {
             &other_resources=other.resources
 #endif
             , this
-        ]() mutable {
+        ]
+#if __cplusplus <= 202002L
+         ()
+#endif
+            mutable {
                 decltype(this->resources) resources;
 
                 while (!std::empty(other_resources))
@@ -839,12 +917,27 @@ class ShM_Resource: public std::pmr::memory_resource {
             }()
         } {}
 
+        /**
+         * @brief 实现交换语义.
+         */
         friend void swap(ShM_Resource& a, decltype(a) b) noexcept {
             std::swap(a.resources, b.resources);
 
             if constexpr (!using_ordered_set)
                 std::swap(a.last_inserted, b.last_inserted);
         }
+        /**
+         * @brief 实现赋值语义.
+         * @details 等号左侧的分配器的资源会被释放.
+         * @note 演示 强制回收所有来自该分配器的共享内存:
+         * ```
+         * auto allocator = ShM_Resource<std::set>{};
+         * auto p1 = allocator.allocate(1),
+         *      p2 = allocator.allocate(2),
+         *      p3 = allocator.allocate(3);
+         * allocator = {};  // 清零.
+         * ```
+         */
         auto& operator=(ShM_Resource other) {
             swap(*this, other);
             return *this;
@@ -862,6 +955,24 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
         }
 
+        /**
+         * @brief 获取 `Shared_Memory<true>` 的集合的引用.
+         * @details 它包含了所有的 已分配而未 deallocated 的共享内存块.
+         * @note 常见的用法是 遍历它的返回值, 从而得知某个对象位于哪块共享内存:
+         * ```
+         * auto allocator = ShM_Resource<std::unordered_set>{};
+         * auto addr = (std::uint8_t *)allocator.allocate(sizeof(int));
+         * const Shared_Memory<true> *pshm;
+         * for (auto& shm : allocator.get_resources())
+         *     if (std::data(shm) <= addr && addr < std::data(shm) + std::size(shm)) {
+         *         pshm = &shm;
+         *         break;
+         *     }
+         * assert(pshm == allocator.last_inserted);
+         * // 或称 ‘last_allocated’ ^^^^^^^^^^^^^
+         * ```
+         * @see ShM_Resource::last_inserted
+         */
         auto get_resources(
 #ifndef __cpp_explicit_this_parameter
         ) const -> decltype(auto) {
@@ -878,21 +989,37 @@ class ShM_Resource: public std::pmr::memory_resource {
             )
                 return std::as_const(self.resources);
             else
-                return
-#ifdef __cpp_explicit_this_parameter
-                    std::move
-#endif
-                    (self.resources);
+                return std::move(self.resources);
         }
 
+        /**
+         * @brief 将 self 以类似 JSON 的格式输出.  调试用.
+         * @note 也可用 `std::println("{}", self)` 打印 (since C++23).
+         */
         friend auto operator<<(std::ostream& out, const ShM_Resource& resrc)
         -> decltype(auto) {
             return out << std::format("{}", resrc);
         }
 
         /**
-         * 查询对象 (‘obj’) 位于哪个 ‘Shared_Memory’ 中.
-         * 但首先, 你得确保 ‘obj’ 确实在 self 的注册表中.
+         * @brief 查询给定对象位于哪块共享内存 (`Shared_Memory<true>`).
+         * @param obj 被查询的对象的指针 (可以是 `void *`).
+         * @return 对象所在的共享内存块的引用.
+         * @note 仅当类的模板参数 `set_t` 是 `std::set` 时, 才 **存在** 此方法.
+         *       因为当使用 `std::unordered_set` 时, 不存在高效的反查算法.
+         * @warning `obj` 必须确实位于来自此分配器给出的共享内存中, 否则结果未定义.
+         * @note example:
+         * ```
+         * auto allocator = ShM_Resource<std::set>{};
+         * auto area = (std::uint8_t *)allocator.allocate(100);
+         * int& i = (int&)area[5],
+         *    & j = (int&)area[5 + sizeof(int)],
+         *    & k = (int&)area[5 + 2 * sizeof(int)];
+         * assert(
+         *     std::data(allocator.find_arena(&i)) == std::data(&allocator.find_arena(&j))
+         *     && std::data(&allocator.find_arena(&j)) == std::data(&allocator.find_arena(&k))
+         * );  // 都在同一块共享内存上.
+         * ```
          */
         auto find_arena(const auto *const obj) const
         -> const auto& requires(using_ordered_set) {
@@ -911,7 +1038,18 @@ class ShM_Resource: public std::pmr::memory_resource {
             return shm;
         }
         /**
-         * 记录最近一次创建的 ‘Shared_Memory’.
+         * @brief 指向最近一次 allocate 的共享内存块 (`Shared_Memory<true>`).
+         * @note 仅当类的模板参数 `set_t` 是 `std::unordered_set` 时, 此成员变量才 **有意义**.
+         * @details `ShM_Resource<std::unordered_set>` 分配器在 allocate 共享内存时, 下游
+         *          只能拿到这块共享内存的首地址.  也无法 *高效地* 根据地址 反查出它指向
+         *          哪块共享内存 (特别是当你需要知道这块共享内存块的 name 时).  该变量在
+         *          一定程度上缓解这个问题, 因为你通常只需要知道刚刚分配的共享内存的信息.
+         * @note example:
+         * ```
+         * auto allocator = ShM_Resource<std::unordered_set>{};
+         * auto addr = allocator.allocate(1);
+         * assert( (std::uint8_t *)addr == std::data(*allocator.last_inserted) );
+         * ```
          */
         std::conditional_t<
             !using_ordered_set,
@@ -1001,15 +1139,29 @@ struct
 
 
 /**
- * 以 ‘ShM_Resource’ 为⬆️游的单调增长 buffer.  优先使用⬆️游上次
- * 下发内存时未能用到的区域响应 ‘allocate’, 而不是再次申请内存资源.
+ * @brief Allocator: 单调增长的共享内存 buffer.  它的 allocation 是
+ *        链式的, 其⬆️游是 `ShM_Resource<std::unordered_set>` 并拥有⬆️游的所有权.
+ * @details 维护一个 buffer, 其中包含若干共享内存块, 因此
+ *          buffer 也不是连续的.  Buffer 的大小单调增加.
+ * @note 在 <br />
+ *       ▪️ **不需要 deallocation**, 分配的共享内存区域
+ *         会一直被使用 <br />
+ *       ▪️ 或 临时发起 **多次** allocation 请求, 并在
+ *         **不久后就 *全部* 释放掉** <br />
+ *       ▪️ 或 **注重时延** 而 内存占用相对不敏感 <br />
+ *       的场合下, 有充分的理由使用该分配器.  因为它非常快,
+ *       只做简单的分配.  (See `Monotonic_ShM_Buffer::do_allocate`.)
  */
 struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         /**
-         * 设定缓冲区的初始大小, 但实际是惰性分配的💤.
-         * ‘initial_size’ 如果不是📄页表大小的整数倍,
-         * 几乎_一定_会浪费空间.
-         * ‘initial_size’ 必须是*正数*!
+         * @brief Buffer 的构造函数.
+         * @param initial_size Buffer 的初始长度, 越大的 size **保证** 越小的均摊时延.
+         * @details 初次 allocation 是惰性的💤, 即构造时并不会立刻创建 buffer.
+         * @note Buffer 的总大小未必是📄页表大小的整数倍, 但
+         *       `initial_size` 最好是.  (该构造函数会自动将
+         *       `initial_size` 用  `ceil_to_page_size(const std::size_t)`
+         *       向上取整.)
+         * @warning `initial_size` 不可为 0.
          */
         Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
         : monotonic_buffer_resource{
@@ -1026,6 +1178,19 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             delete this->monotonic_buffer_resource::upstream_resource();
         }
 
+        /**
+         * @brief 获取指向⬆️游资源的指针.
+         * @note example:
+         * ```
+         * auto buffer = Monotonic_ShM_Buffer{};
+         * auto addr = (std::uint8_t *)buffer.allocate(100);
+         * const Shared_Memory<true>& shm = *buffer.upstream_resource().last_inserted;
+         * assert(
+         *     std::data(shm) <= addr
+         *     && addr < std::data(shm) + std::size(shm)
+         * );  // 新划取的区域一定位于 `upstream_resource()` 最近一次分配的内存块中.
+         * ```
+         */
         auto upstream_resource() const -> const auto * {
             return static_cast<ShM_Resource<std::unordered_set> *>(
                 this->monotonic_buffer_resource::upstream_resource()
@@ -1033,6 +1198,16 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         }
 
     protected:
+        /**
+         * @brief 在共享内存区域中分配内存.
+         * @param size 从共享内存区域中划取的大小.
+         * @param alignment 可选.
+         * @details 首先检查 buffer 的剩余空间, 如果不够, 则向⬆️游
+         *          获取新的共享内存块 (每次向⬆️游申请的块的大小是
+         *          单调增的).  然后, 从剩余空间中从中划出一段.
+         * @note 一般不直接调用此函数, 而是 `allocate`, 所以用法
+         *       类似 `ShM_Resource` (见 `ShM_Resource::do_allocate`).
+         */
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
         ) override {
@@ -1043,6 +1218,12 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             return area;
         }
 
+        /**
+         * @brief 无操作.
+         * @details Buffer 在分配时根本不追踪所有 allocation 的位置,
+         *          它单纯地增长, 以此提高分配速度.  因此也无法根据
+         *          指定位置响应 deallocation.
+         */
         void do_deallocate(
             void *const area, const std::size_t size, const std::size_t alignment
         ) noexcept override {
@@ -1052,6 +1233,12 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
             this->monotonic_buffer_resource::do_deallocate(area, size, alignment);
         }
+#ifdef IPCATOR_IS_DOXYGENING
+        /**
+         * @brief 强制释放所有已分配的内存.
+         */
+        void release();
+#endif
 };
 
 
@@ -1113,6 +1300,13 @@ class ShM_Pool: public std::conditional_t<
                 this->midstream_pool_t::upstream_resource()
             );
         }
+
+#ifdef IPCATOR_IS_DOXYGENING
+        /**
+         * @brief 强制释放所有已分配的内存.
+         */
+        void release();
+#endif
 };
 
 
