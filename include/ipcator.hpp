@@ -1,3 +1,15 @@
+/**
+ * @mainpage
+ * @brief 用于 基于共享内存 的 IPC 的基础设施.  <br />
+ * @details 自顶向下, 包含 3 个共享内存分配器: `Monotonic_ShM_Buffer`, `ShM_Pool<true>`,
+ *          `ShM_Pool<false>`.  它们依赖于 1 个共享内存 **块** 分配器 (即 整块分配):
+ *          `ShM_Resource`.  `ShM_Resource` 管理若干共享内存块, 即 `Shared_Memory`.
+ *          `Shared_Memory` 是对共享内存 **块** 的抽象, 它表示直接从 kernel 处取得的内存而
+ *          不进行任何切分.  读取器有 `ShM_Reader`.
+ *          工具函数/类/概念有 `ceil_to_page_size(std::size_t)`, `generate_shm_UUName()`,
+ *          [namespace literals](./namespaceliterals.html), [concepts](./concepts.html).
+ */
+
 #pragma once
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint, memory_order_relaxed
@@ -689,7 +701,10 @@ inline namespace utils {
 template <template <typename... T> class set_t = std::set>
 class ShM_Resource: public std::pmr::memory_resource {
     public:
-        /// @cond 请 Doxygen 忽略该变量, 因为它总是显示初始值 (而我不想这样).
+        /**
+         * @cond
+         * 请 Doxygen 忽略该变量, 因为它总是显示初始值 (而我不想这样).
+         */
         static constexpr bool using_ordered_set = []
 #if __cplusplus <= 202002L
             ()

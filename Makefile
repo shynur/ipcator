@@ -83,7 +83,7 @@ git:
 .PHONY: doc
 doc:  docs/html/index.html
 	@echo $$'\033[32m文档在 $<\033[0m'
-docs/html/index.html:  docs/Doxyfile.ini include/ipcator.hpp | docs/
+docs/html/index.html:  docs/Doxyfile.ini  include/ipcator.hpp | docs/
 	cd docs;  \
 	doxygen $(<F)
 
