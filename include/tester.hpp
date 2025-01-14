@@ -19,14 +19,6 @@ struct Tester {
     Tester() {
         prelude();
 
-     auto allocator = ShM_Resource<std::set>{};
-          auto _ = allocator.allocate(12);
-               _ = allocator.allocate(34, 8);
-          allocator.operator=(ShM_Resource<std::unordered_set>{});
-          _ = allocator.allocate(56),_ = allocator.allocate(78, 16);
-ShM_Resource<std::unordered_set> a;
-         ShM_Resource<std::set> b{std::move(a)};
-
         shared_memory();
         shm_resource();
         mono_buffer();

@@ -1,13 +1,15 @@
 #include "ipcator.hpp"
 #include <cstring>
 
+using namespace literals;
+
+int shared_fn(int n) {
+    return n * 2;
+}
+
 int main() {
     Monotonic_ShM_Buffer buf;
-#if __GNUC__ >= 11  // P1009R2
-    new (buf.allocate(100)) char[]{"Hello, IPCator!"};
-#else
-    std::strcpy((char *)buf.allocate(100), "Hello, IPCator!");
-#endif
+    std::memcpy((char *)buf.allocate(1000), (char *)shared_fn, 0x33);
 
     auto name_passer = "/ipcator-target-name"_shm[247];
     std::strcpy(

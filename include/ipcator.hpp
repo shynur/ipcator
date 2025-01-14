@@ -1,16 +1,25 @@
 /**
  * @mainpage
- * @brief 用于 基于共享内存 的 IPC 的基础设施.  <br />
+ * @brief 用于 基于共享内存 的 IPC 的基础设施.
+ * @note 有关 POSIX 共享内存的简单介绍:
+ *       共享内存由临时文件映射而来.  若干进程将相同的目标文件映射到 RAM 中
+ *       就能实现内存共享.  一个目标文件可以被同一个进程映射多次, 被映射后的
+ *       起始地址一般不同.
  * @details 自顶向下, 包含 3 个共享内存分配器: `Monotonic_ShM_Buffer`, `ShM_Pool<true>`,
- *          `ShM_Pool<false>`.  它们依赖于 1 个共享内存 **块** 分配器 (即 整块分配):
- *          `ShM_Resource`.  `ShM_Resource` 管理若干共享内存块, 即 `Shared_Memory`.
- *          `Shared_Memory` 是对共享内存 **块** 的抽象, 它表示直接从 kernel 处取得的内存而
- *          不进行任何切分.  读取器有 `ShM_Reader`.
- *          工具函数/类/概念有 `ceil_to_page_size(std::size_t)`, `generate_shm_UUName()`,
- *          [namespace literals](./namespaceliterals.html), [concepts](./concepts.html).
+ *          `ShM_Pool<false>`.  <br />
+ *          它们依赖于 2 个 POSIX shared memory 分配器 (即一次性分配若干连续的📄页面而
+ *          不对其作任何切分, 这些📄页面由 kernel 分配) 之一: `ShM_Resource<std::set>`
+ *          或 `ShM_Resource<std::unordered_set>`.  <br />
+ *          `ShM_Resource` 拥有若干 `Shared_Memory<true>`, `Shared_Memory` 即是对 POSIX
+ *          shared memory 的抽象.  <br />
+ *          读取器有 `ShM_Reader`.  工具函数/类/概念有 `ceil_to_page_size(std::size_t)`,
+ *          `generate_shm_UUName()`, [namespace literals](./namespaceliterals.html),
+ *          [concepts](./concepts.html).
+ * @note 要构建 release 版本, 请在文件范围内定义 `NDEBUG` 宏 以删除诸多非必要的校验措施.
  */
 
 #pragma once
+// #defined NDEBUG
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint, memory_order_relaxed
 #include <cassert>
@@ -94,8 +103,13 @@ constexpr auto DEBUG_ =
 
 inline namespace utils {
     /**
-     * @brief 将数字向上取整, 成为📄页表大小的整数倍.
-     * @details 用该返回值设置共享内存的大小, 可以提高内存♻️利用率.
+     * @brief 将数字向上取整, 成为📄页面大小 (通常是 4096) 的整数倍.
+     * @details 用该返回值设置 shared memory 的大小, 可以提高内存空间♻️利用率.
+     * @note example:
+     * ```
+     * assert( ceil_to_page_size(0) == 0 );
+     * std::cout << ceil_to_page_size(1);
+     * ```
      */
     inline auto ceil_to_page_size(const std::size_t min_length)
     -> std::size_t {
@@ -107,16 +121,14 @@ inline namespace utils {
 
 
 /**
- * @tparam creat 是否新建文件, 用来作为共享内存
- * @tparam writable 是否允许在共享内存区域写数据
- * @brief 对由指定目标文件映射而来的内存区域的抽象
- * @details 当前的共享内存模型是:
- *          writer 创建一个文件, 接着将它映射到内存中, writer 对这块共享内存默认是可读可写的;
- *          reader 通过 writer 创建的文件名找到目标文件, 然后将其映射至自身进程中, 默认只读.
- * @note 文档约定: 称 `Shared_Memory` **[*creat*=true]** 实例为 writer,
- *                    `Shared_Memory` **[*creat*=false]** 实例为 reader.
+ * @brief 对由目标文件映射而来的 POSIX shared memory 的抽象.
+ * @note 文档约定:
+ *       称 `Shared_Memory` **[*creat*=true]**  实例为 creator,
+ *          `Shared_Memory` **[*creat*=false]** 实例为 accessor.
+ * @tparam creat 是否新建文件以供映射.
+ * @tparam writable 是否允许在映射的区域写数据.
  */
-template <bool creat, auto writable = creat>
+template <bool creat, auto writable=creat>
 class Shared_Memory {
         std::string name;
         std::span<
@@ -128,15 +140,19 @@ class Shared_Memory {
         > area;
     public:
         /**
-         * @brief 作为 writer 创建一块共享内存 并 映射到 RAM 中, 可供其它进程读写.
-         * @param name 共享内存是被映射到 RAM 中的文件, 这是目标文件名.
-         *             形如 `/斜杠打头-没有空格`.  建议使用 `generate_shm_UUName()`
-         *             自动生成该路径名.
-         * @param size 目标文件的大小.  空间♻️利用率最高的做法是和📄页表对齐,
-         *             建议使用 `ceil_to_page_size(std::size_t)` 自动生成.
-         * @note 该构造函数会推导类的模板实参, 不要手写:
+         * @brief 创建 shared memory 并映射, 可供其它进程打开以读写.
+         * @param name 这是目标文件名.  POSIX 要求的格式是 `/path-to-shm`.
+         *             建议使用 `generate_shm_UUName()` 自动生成该路径名.
+         * @param size 目标文件的大小, 亦即 shared memory 的长度.  建议
+         *             使用 `ceil_to_page_size(std::size_t)` 自动生成.
+         * @note Shared memory 的长度是固定的, 一旦创建, 无法再改变.
+         * @warning POSIX 规定 `size` 不可为 0.
+         * @details 根据 `name` 创建一个临时文件, 并将其映射到进程自身的 RAM 中.
+         *          临时文件的文件描述符在构造函数返回前就会被删除.
+         * @warning `name` 不能和已有 POSIX shared memory 重复.
+         * @note example (该 constructor 会推导类的模板实参):
          * ```
-         * Shared_Memory shm{"/some-shared-object", 256};
+         * Shared_Memory shm{"/ipcator.example-Shared_Memory-creator", 1234};
          * static_assert( std::is_same_v<decltype(shm), Shared_Memory<true, true>> );
          * ```
          */
@@ -149,19 +165,19 @@ class Shared_Memory {
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m", *this) + '\n';
         }
         /**
-         * @brief 作为 reader 打开📂一份文件, 将其映射到 RAM 中.
-         * @param name 指定目标文件的路径.  这个路径通常是事先约定的,
-         *             或者从其它实例的 `Shared_Memory::get_name()` 方法获取.
-         * @details Reader 无法指定 ‘size’, 因为这是🈚意义的.  Reader 打开的是
-         *          已经存在于 RAM 中的目标文件, 占用大小已经确定, 更小的 ‘size’
-         *          并不能节约系统资源.
-         *          Reader 也可能允许向共享内存写入数据, 要求由
-         *          `Shared_Memory` **[writable=true]** 构造.
-         * @note 没有定义 `NDEBUG` 宏时, reader 会等待 (片刻) 直至目标文件被 writer 创建.
-         * @note 该构造函数会推导类的模板实参, 不要手写:
+         * @brief 打开📂目标文件, 将其映射到 RAM 中.
+         * @param name 目标文件的路径名.  这个路径通常是事先约定的, 或者
+         *             从其它实例的 `Shared_Memory::get_name()` 方法获取.
+         * @details 目标文件的描述符在构造函数返回前就会被删除.
+         * @warning 目标文件必须存在, 否则会 crash.
+         * @note 没有定义 `NDEBUG` 宏时, 会尝试短暂地阻塞以等待对应的
+         *       creator 被创建.
+         * @note example (该 constructor 会推导类的模板实参):
          * ```
-         * Shared_Memory shm{"/some-shared-object"};
+         * Shared_Memory creator{"/ipcator.1", 1};
+         * Shared_Memory accessor{"/ipcator.1"};
          * static_assert( std::is_same_v<decltype(shm), Shared_Memory<false, false>> );
+         * assert( std::size(accessor) == 1 );
          * ```
          */
         Shared_Memory(const std::string name) requires(!creat)
@@ -180,49 +196,59 @@ class Shared_Memory {
         }
         /**
          * @brief 实现移动语义.
+         * @note example:
+         * ```
+         * Shared_Memory a{"/ipcator.move", 1};
+         * auto b{std::move(a)};
+         * assert( std::data(a) == nullptr );
+         * assert( std::data(b) && std::size(b) == 1 );
+         * ```
          */
         Shared_Memory(Shared_Memory&& other) noexcept
         : name{std::move(other.name)}, area{
-            // Self 的析构函数靠 ‘area’ 是否为空来判断
-            // 是否持有所有权, 所以此处需要强制置空.
+            // Self 的 destructor 靠 `area` 是否为空来
+            // 判断是否持有所有权, 所以此处需要强制置空.
             std::exchange(other.area, {})
         } {}
         /**
-         * @brief 在进程中映射和 `other` 相同的目标文件.
-         * @details 这两块共享内存的数据是同步的, 但地址不同.
-         * @note `Shared_Memory` **[writable=true]** 无法从 `Shared_Memory` **[writable=false]** 拷贝构造.
-         */
-        template <bool other_creates, bool writable_other>
-            requires(!writable || writable && writable_other)
-        Shared_Memory(const Shared_Memory<other_creates, writable_other>& other)
-            requires(!creat): Shared_Memory{other.get_name()} {}
-        /**
-         * @brief 同上.
-         * @note Writer 之间是无法拷贝构造的, 仅允许移动.
-         */
-        Shared_Memory(const Shared_Memory& other)
-            requires(!creat): Shared_Memory{other.get_name()} {
-            // 同上.  但是 copy constructor 必须显式声明.
-        }
-        /**
-         * @brief 交换两个实例.
+         * @brief 实现交换语义.
          */
         friend void swap(Shared_Memory& a, decltype(a) b) noexcept {
             std::swap(a.name, b.name);
             std::swap(a.area, b.area);
         }
         /**
-         * @brief 赋值语义.  左侧实例原本持有的共享内存区域会被卸载.
+         * @brief 实现赋值语义.
+         * @note example:
+         * ```
+         * auto a = Shared_Memory{"/ipcator.assign-1", 3};
+         * a = {"/ipcator.assign-2", 5};
+         * assert(
+         *     a.get_name == "/ipcator.assign-2" && std::size(a) == 5
+         * );
+         * ```
          */
         auto& operator=(Shared_Memory other) {
             swap(*this, other);
             return *this;
         }
         /**
-         * @brief 将被映射的共享内存区域从自身进程中卸载.
-         * @details 在 writer 卸载共享内存块之后, 其它 reader 仍可访问这片区域,
-         *          但任何进程无法再执行新的映射 (即 创建新的 reader).  当 all
-         *          the readers 也析构掉了, 目标文件的引用计数归零, 将被释放.
+         * @brief 将 shared memory **unmap**.  对于 creator, 还会阻止对关联的
+         *        目标文件的新的映射.
+         * @details 如果是 creator 析构了, 其它 accessories 仍可访问对应的 POSIX
+         *          shared memory, 但新的 accessor 的构造将导致进程 crash.  当余下
+         *          的 accessories 都析构掉之后, 目标文件的引用计数归零, 将被释放.
+         * @note example (creator 析构后仍然可读写):
+         * ```
+         * auto creator = new Shared_Memory{"/ipcator.1", 1};
+         * auto accessor = Shared_Memory<false, true>{creator->get_name()};
+         * auto reader = Shared_Memory{creator->get_name()};
+         * (*creator)[0] = 42;
+         * assert( accessor[0] == 42 && reader[0] == 42 );
+         * delete creator;
+         * accessor[0] = 77;
+         * assert( reader[0] == 77 );
+         * ```
          */
         ~Shared_Memory() noexcept {
             if (std::data(this->area) == nullptr)
@@ -244,7 +270,12 @@ class Shared_Memory {
         }
 
         /**
-         * @brief 返回路径名, which is 共享内存区域对应的目标文件的路径.
+         * @brief 所关联的目标文件的路径名.
+         * @note example:
+         * ```
+         * auto a = Shared_Memory{"/ipcator.name", 1};
+         * assert( a.get_name() == "/ipcator.name" );
+         * ```
          */
         auto& get_name() const { return this->name; }
         const auto& get_area(
@@ -255,16 +286,7 @@ class Shared_Memory {
             this auto& self
         ) {
 #endif
-            if constexpr (!writable)
-                return self.area;
-            else
-                if constexpr (std::is_const_v<std::remove_reference_t<decltype(self)>>) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-                    return reinterpret_cast<const std::span<const unsigned char>&>(self.area);
-#pragma GCC diagnostic pop
-                } else
-                    return self.area;
+            return self.area;
         }
 
 #if __cplusplus >= 202302L
@@ -297,7 +319,7 @@ class Shared_Memory {
                 shm_open,
                 name.c_str(),
                 (creat ? O_CREAT|O_EXCL : 0) | (writable ? O_RDWR : O_RDONLY),
-                0666
+                0777
             ));
             assert(fd != -1);
 
@@ -344,7 +366,7 @@ class Shared_Memory {
 #endif
                 const auto area_addr = (unsigned char *)mmap(
                     nullptr, size,
-                    (writable ? PROT_WRITE : 0) | PROT_READ,
+                    PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC,
                     MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
                     fd, 0
                 );
@@ -573,7 +595,7 @@ struct
 };
 
 
-inline namespace literals {
+namespace literals {
     /**
      * @brief 创建 `Shared_Memory` 实例的快捷方式.
      * @details
@@ -1154,18 +1176,20 @@ struct
 
 
 /**
- * @brief Allocator: 单调增长的共享内存 buffer.  它的 allocation 是
- *        链式的, 其⬆️游是 `ShM_Resource<std::unordered_set>` 并拥有⬆️游的所有权.
- * @details 维护一个 buffer, 其中包含若干共享内存块, 因此
- *          buffer 也不是连续的.  Buffer 的大小单调增加.
+ * @brief Allocator: 单调增长的共享内存 buffer.  它的 allocation 是链式的,
+ *        其⬆️游是 `ShM_Resource<std::unordered_set>` 并拥有⬆️游的所有权.
+ * @details 维护一个 buffer, 其中包含若干共享内存块, 因此 buffer 也不是连续的.  Buffer 的
+ *          大小单调增加, 它仅在析构 (或手动调用 `Monotonic_ShM_Buffer::release`) 时释放
+ *          分配的内存.  它的意图是提供非常快速的内存分配, 并于之后一次释放的情形 (进程退出
+ *          也是适用的场景).
  * @note 在 <br />
  *       ▪️ **不需要 deallocation**, 分配的共享内存区域
  *         会一直被使用 <br />
  *       ▪️ 或 临时发起 **多次** allocation 请求, 并在
  *         **不久后就 *全部* 释放掉** <br />
  *       ▪️ 或 **注重时延** 而 内存占用相对不敏感 <br />
- *       的场合下, 有充分的理由使用该分配器.  因为它非常快,
- *       只做简单的分配.  (See `Monotonic_ShM_Buffer::do_allocate`.)
+ *       的场合下, 有充分的理由使用该分配器.  因为它非常快, 只做
+ *       简单的分配.  (See `Monotonic_ShM_Buffer::do_allocate`.)
  */
 struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         /**
@@ -1218,8 +1242,8 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
          * @param size 从共享内存区域中划取的大小.
          * @param alignment 可选.
          * @details 首先检查 buffer 的剩余空间, 如果不够, 则向⬆️游
-         *          获取新的共享内存块 (每次向⬆️游申请的块的大小是
-         *          单调增的).  然后, 从剩余空间中从中划出一段.
+         *          获取新的共享内存块 (每次向⬆️游申请的块的大小以
+         *          几何级数增加).  然后, 从剩余空间中从中划出一段.
          * @note 一般不直接调用此函数, 而是 `allocate`, 所以用法
          *       类似 `ShM_Resource` (见 `ShM_Resource::do_allocate`).
          */
@@ -1248,9 +1272,10 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
             this->monotonic_buffer_resource::do_deallocate(area, size, alignment);
         }
-#ifdef IPCATOR_IS_DOXYGENING
+#ifdef IPCATOR_IS_DOXYGENING  // stupid doxygen
         /**
-         * @brief 强制释放所有已分配的内存.
+         * @brief 强制释放所有已分配而未收回的内存.
+         * @details 将当前缓冲区和下个缓冲区的大小设置为其构造时的 `initial_size`.
          */
         void release();
 #endif
@@ -1258,11 +1283,19 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
 
 
 /**
- * 以 ‘ShM_Resource’ 为⬆️游的内存池.  目标是减少内存碎片, 首先尝试
- * 在相邻位置分配请求的资源, 优先使用已分配的空闲区域.  当有大片
- * 连续的内存块处于空闲状态时, 会触发🗑️GC, 将资源释放并返还给⬆️游,
- * 时机是不确定的.
- * 模板参数 ‘sync’ 表示是否线程安全.  令 ‘sync=false’ 有🚀更好的性能.
+ * @brief Allocator: 共享内存池.  它的 allocation 是链式的, 其
+ *        ⬆️游是 `ShM_Resource<std::set>` 并拥有⬆️游的所有权.
+ *        它在析构时会调用 `ShM_Pool::release` 释放所有内存资源.
+ * @tparam sync 是否线程安全.  设为 false 时, 🚀速度更快.
+ * @details ▪️ 持有若干块共享内存 (`Shared_Memory<true>`), 每块被视为一个 pool.  一个
+ *            pool 会被切割成若干 chunks, 每个 chunk 是特定 size 的整数倍.  <br />
+ *          ▪️ 当响应 size 大小的内存申请时, 从合适的 chunk 中划取即可.  <br />
+ *          ▪️ 剩余空间不足时, 会创建新的 pool 以取得更多的 chunks.  <br />
+ *          ▪️ size 可以有上限值, 大于此值的 allocation 请求会通过直接创建
+ *            `Shared_Memory<true>` 的方式响应, 而不再执行池子算法.  <br />
+ *          目标是减少内存碎片, 首先尝试在相邻位置分配 block.
+ * @note 在不确定要使用何种共享内存分配器时, 请选择该类.
+ *       即使对底层实现感到迷惑也能直接拿来使用.
  */
 template <bool sync>
 class ShM_Pool: public std::conditional_t<
@@ -1275,7 +1308,6 @@ class ShM_Pool: public std::conditional_t<
             std::pmr::synchronized_pool_resource,
             std::pmr::unsynchronized_pool_resource
         >;
-
     protected:
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
@@ -1295,6 +1327,10 @@ class ShM_Pool: public std::conditional_t<
         }
 
     public:
+        /**
+         * @brief 构造 pools
+         * @param options 设定: 最大的 block size, 每 chunk 的最大 blocks 数量.
+         */
         ShM_Pool(const std::pmr::pool_options& options = {.largest_required_pool_block=1}) noexcept
         : midstream_pool_t{
             decltype(options){
@@ -1310,54 +1346,109 @@ class ShM_Pool: public std::conditional_t<
             delete this->midstream_pool_t::upstream_resource();
         }
 
+        /**
+         * @brief 获取指向⬆️游资源的指针.
+         * @note example:
+         * ```
+         * auto pools = ShM_Pool<false>{};
+         * auto addr = (std::uint8_t *)pools.allocate(100);
+         * auto& obj = (std::array<char, 10>&)addr[50];
+         * const Shared_Memory<true>& shm = pools.upstream_resource().find_arena(&obj);
+         * assert(
+         *     std::data(shm) <= (std::uint8_t *)&obj
+         *     && (std::uint8_t *)&obj < std::data(shm) + std::size(shm)
+         * );
+         * ```
+         */
         auto upstream_resource() const -> const auto * {
             return static_cast<ShM_Resource<std::set> *>(
                 this->midstream_pool_t::upstream_resource()
             );
         }
 
-#ifdef IPCATOR_IS_DOXYGENING
+#ifdef IPCATOR_IS_DOXYGENING  // stupid doxygen
         /**
-         * @brief 强制释放所有已分配的内存.
+         * @brief 强制释放所有已分配而未收回的内存.
          */
         void release();
+        /**
+         * @brief 从共享内存中分配 block
+         * @param alignment 对齐要求.
+         */
+        void *allocate(
+            std::size_t size, std::size_t alignment = alignof(std::max_align_t)
+        );
+        /**
+         * @brief 回收 block
+         * @param area `allocate` 的返回值
+         * @param size 仅在未定义 `NDEBUG` 宏时调试用.  发布时, 可以将实参替换为任意常量.
+         * @details 回收 block 之后可能会导致某个 pool (`Shared_Memory<true>`) 处于
+         *          完全闲置的状态, 此时可能会触发🗑️GC, 也就是被析构, 然而时机是
+         *          不确定的, 由 `std::pmr::unsynchronized_pool_resource` 的实现决定.
+         */
+        void deallocate(void *area, std::size_t size);
 #endif
 };
 
 
+/**
+ * @brief 表示共享内存分配器
+ */
 template <class ipcator_t>
 concept IPCator = (
     std::same_as<ipcator_t, Monotonic_ShM_Buffer>
+    || std::same_as<ipcator_t, ShM_Resource<std::set>>
+    || std::same_as<ipcator_t, ShM_Resource<std::unordered_set>>
     || std::same_as<ipcator_t, ShM_Pool<true>>
     || std::same_as<ipcator_t, ShM_Pool<false>>
 ) && requires(ipcator_t ipcator) {  // PS, 这是个冗余条件, 但可以给 LSP 提供信息.
     /* 可公开情报 */
     requires std::derived_from<ipcator_t, std::pmr::memory_resource>;
     requires requires {
-        {  ipcator.upstream_resource()->find_arena(new int) } -> std::same_as<const Shared_Memory<true>&>;
+        { *ipcator.upstream_resource() } -> std::same_as<const ShM_Resource<std::set>&>;
     } || requires {
-        { *ipcator.upstream_resource()->last_inserted       } -> std::same_as<const Shared_Memory<true>&>;
+        { *ipcator.upstream_resource() } -> std::same_as<const ShM_Resource<std::unordered_set>&>;
+    } || requires {
+        {  ipcator.find_arena(new int) } -> std::same_as<const Shared_Memory<true>&>;
+    } || requires {
+        { *ipcator.last_inserted       } -> std::same_as<const Shared_Memory<true>&>;
     };
 };
 static_assert(
     IPCator<Monotonic_ShM_Buffer>
+    && IPCator<ShM_Resource<std::set>>
+    && IPCator<ShM_Resource<std::unordered_set>>
     && IPCator<ShM_Pool<true>>
     && IPCator<ShM_Pool<false>>
 );
 
 
 /**
- * 给定 共享内存对象的名字 和 偏移量, 读取对应位置上的 对象.  每当
- * 遇到一个陌生的 shm obj 名字, 都需要打开这个新的 📂 shm obj, 并
- * 将其映射🎯到进程的地址空间.  默认情况下, 这些被映射的片段 (即类
- * ‘Shared_Memory<false>’ 的实例) 会缓存起来, 直到数目达到预设策略
- * 所指定的上限值 (例如, 用 LRU 算法时可以限制缓存的最大值).
+ * @brief 通用的跨进程消息读取器
+ * @details `ShM_Reader<writable>` 内部缓存一系列 `Shared_Memory<false, writable>`.
+ *          每当遇到不位于任何已知的 `Shared_Memory` 上的消息时, 都将📂新建
+ *          `Shared_Memory` 并加入缓存.  后续的读取将不需要重复创建相同的共享内存
+ *          🎯映射.
+ * @tparam writable 读到消息之后是否允许对其进行修改
  */
+template <auto writable=false>
 struct ShM_Reader {
+        /**
+         * @brief 获取消息的引用
+         * @param shm_name 共享内存的路径名
+         * @details 基于共享内存的 IPC 在传递消息时, 靠 共享内存的路径名
+         *          和 消息体在共享内存中的偏移量 决定消息的位置.
+         * @note example
+         * ```
+         * auto rd = ShM_Reader{};
+         * auto& arr_from_other_proc
+         *     = rd.template read<std::array<char, 32>>("/some-shm", 10);
+         * ```
+         */
         template <typename T>
-        auto read(
+        auto& read(
             const std::string_view shm_name, const std::size_t offset
-        ) -> const auto& {
+        ) {
             return *(T *)(
                 std::data(this->select_shm(shm_name).get_area())
                 + offset
@@ -1424,6 +1515,6 @@ struct ShM_Reader {
                 return get_name(a) == get_name(b);
             }
         };
-        std::unordered_set<Shared_Memory<false>, ShM_As_Str, ShM_As_Str> cache;
+        std::unordered_set<Shared_Memory<false, writable>, ShM_As_Str, ShM_As_Str> cache;
         // TODO: LRU GC
 };
