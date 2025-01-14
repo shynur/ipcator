@@ -20,3 +20,9 @@ int main() {
 
     std::this_thread::sleep_for(100ms);
 }
+
+struct S {
+    ~S() {
+        std::cerr << "析构了";
+    }
+} _;

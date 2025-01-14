@@ -46,7 +46,7 @@ ipc:  bin/ipc-writer-$(BUILD_INFO).exe  bin/ipc-reader-$(BUILD_INFO).exe
 	@wait
 
 
-bin/test-$(BUILD_INFO).exe:  src/test.cpp  include/tester.hpp  include/ipcator.hpp  $(LIBARS) | bin/
+bin/test-$(BUILD_INFO).exe:  src/test.cpp  include/ipcator.hpp  $(LIBARS) | bin/
 	mkdir -p /tmp/shynur/ipcator/;  \
 	if time  \
 	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $< -L./lib/archives $(LDFLAGS) -o $@  \

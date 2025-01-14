@@ -14,5 +14,7 @@ int main() {
         }, 0
     );
 
+
+    std::this_thread::sleep_for(2s);
     std::cout << "42 x 2 = " << ((int(*)(int))(&mul2))(42) << '\n';
 }
