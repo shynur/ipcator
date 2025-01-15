@@ -1,6 +1,6 @@
 ## Get Started
 
-一个简单的示例, 在 reader 进程中执行 writer 进行里的函数:
+一个简单的示例, 在 reader 进程中执行 writer 进程里的函数:
 
 ```cpp
 // writer.cpp
