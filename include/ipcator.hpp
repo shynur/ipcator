@@ -1420,6 +1420,7 @@ struct ShM_Reader {
          * @note example:
          * ```
          * // writer.cpp
+         * using namespace literals;
          * auto shm = "/ipcator.1"_shm[1000];
          * auto arr = new(shm[42]) std::array<char, 32>;
          * arr[15] = 9;
