@@ -63,7 +63,7 @@ int main() {
 ## 下载
 
 ```bash
-git clone -b master --single-branch git@github.com:shynur/ipcator.git
+git clone -b master --single-branch --recurse-submodule https://github.com/shynur/ipcator.git
 (cd ipcator
  git checkout `git tag --sort=-creatordate | grep [0-9]\$ - | head -n 1`)
 ```
