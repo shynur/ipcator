@@ -148,12 +148,12 @@ class Shared_Memory: public std::span<
          * @brief 创建 shared memory 并映射, 可供其它进程打开以读写.
          * @param name 这是目标文件名.  POSIX 要求的格式是 `/path-to-shm`.
          *             建议使用 `generate_shm_UUName()` 自动生成该路径名.
-         * @param size 目标文件的大小, 亦即 shared memory 的长度.  建议
-         *             使用 `ceil_to_page_size(std::size_t)` 自动生成.
+         * @param size 目标文件的大小, 亦即 shared memory 的长度.  建议使用
+         *             `ceil_to_page_size(std::size_t)` 自动生成.
          * @note Shared memory 的长度是固定的, 一旦创建, 无法再改变.
          * @warning POSIX 规定 `size` 不可为 0.
-         * @details 根据 `name` 创建一个临时文件, 并将其映射到进程自身的 RAM 中.
-         *          临时文件的文件描述符在构造函数返回前就会被删除.
+         * @details 根据 `name` 创建一个临时文件, 并将其映射到进程自身的
+         *          RAM 中.  临时文件的文件描述符在构造函数返回前就会被删除.
          * @warning `name` 不能和已有 POSIX shared memory 重复.
          * @note example (该 constructor 会推导类的模板实参):
          * ```
@@ -237,11 +237,11 @@ class Shared_Memory: public std::span<
             return *this;
         }
         /**
-         * @brief 将 shared memory **unmap**.  对于 creator, 还会阻止对关联的
-         *        目标文件的新的映射.
-         * @details 如果是 creator 析构了, 其它 accessories 仍可访问对应的 POSIX
+         * @brief 将 shared memory **unmap**.  对于 creator, 还会阻止对关联的目标
+         *        文件的新的映射.
+         * @details 如果是 creator 析构了, 其它 accessors 仍可访问对应的 POSIX
          *          shared memory, 但新的 accessor 的构造将导致进程 crash.  当余下
-         *          的 accessories 都析构掉之后, 目标文件的引用计数归零, 将被释放.
+         *          的 accessors 都析构掉之后, 目标文件的引用计数归零, 将被释放.
          * @note example (creator 析构后仍然可读写):
          * ```
          * auto creator = new Shared_Memory{"/ipcator.1", 1};
@@ -1201,7 +1201,11 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
 #ifdef IPCATOR_IS_DOXYGENING  // stupid doxygen
         /**
          * @brief 强制释放所有已分配而未收回的内存.
-         * @details 将当前缓冲区和下个缓冲区的大小设置为其构造时的 `initial_size`.
+         * @details 将当前缓冲区和下个缓冲区的大小设置为其构造时的
+         *          `initial_size`.
+         * @note 内存的释放仅代表 `Shared_Memory<true>` 的析构, 因此
+         *       其它进程仍可能从这些内存中读取消息.  (See
+         *       `Shared_Memory::~Shared_Memory()`.)
          */
         void release();
         /**
@@ -1336,6 +1340,9 @@ class ShM_Pool: public std::conditional_t<
         std::pmr::pool_options options() const;
         /**
          * @brief 强制释放所有已分配而未收回的内存.
+         * @note 内存的释放仅代表 `Shared_Memory<true>` 的析构, 因此
+         *       其它进程仍可能从这些内存中读取消息.  (See
+         *       `Shared_Memory::~Shared_Memory()`.)
          * @note example
          * ```
          * auto pools = ShM_Pool<false>{};
@@ -1406,7 +1413,8 @@ static_assert(
  *          并加入缓存.  后续的读取将不需要重复打开
  *          相同的目标文件和徒劳的🎯映射.
  *          `ShM_Reader` 会执行特定的策略, 控制缓存
- *          大小, 以限制自身占用的资源.
+ *          大小, 以限制自身占用的资源.  若要清空缓存,
+ *          应直接调用析构函数.
  */
 template <auto writable=false>
 struct ShM_Reader {
