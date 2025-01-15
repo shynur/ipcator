@@ -1,3 +1,59 @@
+## Get Started
+
+一个简单的示例, 在 reader 进程中执行 writer 进行里的函数:
+
+```cpp
+// writer.cpp
+#include "ipcator.hpp"
+using namespace literals;
+
+#include <cstring>
+
+extern "C" int shared_fn(int n) { return n * 2 + 1; }  // 要传递的函数.
+
+int main() {
+    Monotonic_ShM_Buffer buf;  // 共享内存 buffer.
+    auto block = buf.allocate(0x33);  // 向 buffer 申请内存块.
+    std::memcpy((char *)block, (char *)shared_fn, 0x33);  // 向内存块写入数据.
+
+    // 这是 block 所在的 POSIX shared memory:
+    auto& target_shm = buf.upstream_resource()->find_arena(block);
+
+    // 事先约定的共享内存 vvvvvvvvvvvvvvvv, 用来存放 target_shm 的路径名:
+    auto name_passer = "/ipcator.target-name"_shm[248];
+    // 将 target_shm 的路径名拷贝到 name_passer 中:
+    std::strcpy(std::data(name_passer), target_shm.get_name().c_str());
+
+    auto offset_passer = "/ipcator.msg-offset"_shm[sizeof(std::size_t)];
+    (std::size_t&)offset_passer[0] = (char *)block - std::data(target_shm);
+
+    std::this_thread::sleep_for(1s);  // 等待 reader 获取消息.
+}
+```
+
+```cpp
+// reader.cpp
+#include "ipcator.hpp"
+using namespace literals;
+
+int main() {
+    std::this_thread::sleep_for(0.3s);  // 等 writer 先创建好消息.
+
+    ShM_Reader rd;
+    auto& mul2_add1 = rd.template read<int(int)>(
+        std::data(-"/ipcator.target-name"_shm),  // 目标共享内存的路径名.
+        (std::size_t&)(-"/ipcator.msg-offset"_shm)[0]  // 消息的偏移量.
+    );  // 获取函数.
+
+    std::this_thread::sleep_for(1.3s);  // 这时 writer 进程已经退出了, 当我们仍能读取消息:
+    std::cout << "\n[[[ 42 x 2 + 1 = " << mul2_add1(42) << " ]]]\n\n\n";
+}
+```
+
+你可自己手动编译执行; 也可根据 [测试双进程间的通信](#测试双进程间的通信) 的提示,
+将以上两段代码分别填到 [`src`](./src/) 目录下的 `ipc-*.cpp` 文件中,
+再在仓库目录用 `NDEBUG=1 CXX=g++-10 ISOCPP=20 make ipc` (自己调整 `CXX` 和 `ISOCPP`) 自动执行.
+
 ## 功能
 
 提供 POSIX-compatible 的共享内存分配器与读取器.
@@ -61,11 +117,16 @@ NDEBUG=1 make test  # 更好的性能, 更少的日志
 
 ### 测试双进程间的通信
 
+将代码填入 [`src/ipc-writer.cpp`](./src/ipc-writer.cpp)
+和 [`src/ipc-reader.cpp`](./src/ipc-reader.cpp), 然后
+
 ```bash
 make ipc
 # 或
 NDEBUG=1 make ipc
 ```
+
+就能看到结果.
 
 ### 兼容性测试
 
