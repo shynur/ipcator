@@ -2,14 +2,15 @@
  * @mainpage
  * @brief 用于 基于共享内存 的 IPC 的基础设施.
  * @note 有关 POSIX 共享内存的简单介绍: <br />
- *       共享内存由临时文件映射而来.  若干进程将相同的目标文件映射到 RAM 中
- *       就能实现内存共享.  一个目标文件可以被同一个进程映射多次, 被映射后的
- *       起始地址一般不同.  <br />
- * @details 自顶向下, 包含 3 个共享内存分配器: `Monotonic_ShM_Buffer`, `ShM_Pool<true>`,
- *          `ShM_Pool<false>`.  <br />
- *          它们依赖于 2 个 POSIX shared memory 分配器 (即一次性分配若干连续的📄页面而
- *          不对其作任何切分, 这些📄页面由 kernel 分配) 之一: `ShM_Resource<std::set>`
- *          或 `ShM_Resource<std::unordered_set>`.  <br />
+ *       共享内存由临时文件映射而来.  若干进程将相同的目标文件映射到 RAM 中就能实现
+ *       内存共享.  一个目标文件可以被同一个进程映射多次, 被映射后的起始地址一般不同.
+ *       <br />
+ * @details 自顶向下, 包含 3 个共享内存分配器 **适配器**: `Monotonic_ShM_Buffer`,
+ *          `ShM_Pool<true>`, `ShM_Pool<false>`.  <br />
+ *          它们将 2 个 POSIX shared memory 分配器 (即一次性分配若干连续的📄页面而
+ *          不对其作任何切分, 这些📄页面由 kernel 分配) —— `ShM_Resource<std::set>`
+ *          和 `ShM_Resource<std::unordered_set>` —— 的其中之一作为⬆️游, 实施特定的
+ *          分配算法.  <br />
  *          `ShM_Resource` 拥有若干 `Shared_Memory<true>`, `Shared_Memory` 即是对 POSIX
  *          shared memory 的抽象.  <br />
  *          读取器有 `ShM_Reader`.  工具函数/类/概念有 `ceil_to_page_size(std::size_t)`,
@@ -17,12 +18,19 @@
  *          [concepts](./concepts.html).
  * @note 关于 POSIX shared memory 生命周期的介绍: <br />
  *       我们使用 `Shared_Memory` 实例对 POSIX shared memory 进行引用计数, 这个计数是跨
- *       进程的, 并且和 `Shared_Memory` 的生命周期相关联, 一个实例对应 *1* 个计数.  仅当
- *       POSIX shared memory 的计数为 0 的时候, 它占用的物理内存才会被真正释放.  <br />
+ *       进程的, 并且和 `Shared_Memory` 的生命周期相关联, 一个实例对应 **1** 个计数.
+ *       **仅当** POSIX shared memory 的计数为 0 的时候, 它占用的物理内存才被真正释放.
+ *       <br />
  *       `ShM_Resource`, `Monotonic_ShM_Buffer`, 和 `ShM_Pool` 都持有若干个 `Shared_Memory`
  *       实例, 在这些分配器析构之前, 它们分配的共享内存块绝对能被访问; 在它们析构之后, 或
  *       调用了 `release()` 方法 (如有) 之后, 那些共享内存块是否仍驻留在物理内存中 视情况
  *       而定, 原因如上.  <br />
+ *       `Shared_Memory` \[*creat*=false\] 是对 POSIX shared memory 的读抽象.  读取消息
+ *       通常使用 `ShM_Reader` 实例, 它自动执行目标共享内存的映射以及读取, 并在读取后保留
+ *       该映射以备后续再次读取, 也就是说它维护一个 `Shared_Memory` \[*creat*=false\] cache.
+ *       因此 `ShM_Reader` 对 POSIX shared memory 的引用计数也有贡献, 且保证单个实例对同
+ *       一片 POSIX shared memory 最多增加 **1** 个引用计数.  当 `ShM_Reader` 析构时, 释放
+ *       所有资源 (所以也会将缓存过的 POSIX shared memory 的引用计数减一).
  * @warning 要构建 release 版本, 请在文件范围内定义 `NDEBUG` 宏 以删除诸多非必要的校验
  *          措施, 否则性能会非常差.
  */
