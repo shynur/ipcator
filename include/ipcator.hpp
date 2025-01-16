@@ -32,7 +32,7 @@
  *       一片 POSIX shared memory 最多增加 **1** 个引用计数.  当 `ShM_Reader` 析构时, 释放
  *       所有资源 (所以也会将缓存过的 POSIX shared memory 的引用计数减一).
  * @warning 要构建 release 版本, 请在文件范围内定义 `NDEBUG` 宏 以删除诸多非必要的校验
- *          措施, 否则性能会非常差.
+ *          措施, 否则性能会非常差 且 编译时间增加.
  */
 
 #pragma once
@@ -174,7 +174,7 @@ class Shared_Memory: public std::span<
          * @warning `name` 不能和已有 POSIX shared memory 重复.
          * @note example (该 constructor 会推导类的模板实参):
          * ```
-         * Shared_Memory shm{"/ipcator.example-Shared_Memory-creator", 1234};
+         * Shared_Memory shm{"/ipcator.Shared_Memory-creator", 1234};
          * static_assert( std::is_same_v<decltype(shm), Shared_Memory<true, true>> );
          * ```
          */
@@ -749,7 +749,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * @details 新建 `Shared_Memory<true>`, 不作任何切分,
          *          因此这是粒度最粗的分配器.
          * @return `Shared_Memory<true>` 的 `std::data` 值.
-         * @note example
+         * @note example:
          * ```
          * auto allocator = ShM_Resource<std::set>{};
          * auto _ = allocator.allocate(12); _ = allocator.allocate(34, 8);
@@ -811,7 +811,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #endif
             if constexpr (!using_ordered_set)
                 this->last_inserted = std::to_address(
-#if __GNUC__ == 10  // GCC 的 bug, 见 ipcator#2.
+#if _GLIBCXX_RELEASE == 10  // GCC 的 bug, 见 ipcator#2.
                     &*
 #endif
                     inserted
@@ -859,7 +859,6 @@ class ShM_Resource: public std::pmr::memory_resource {
             else
                 return false;
         }
-
     public:
         /**
          * @brief 构造函数.
@@ -1342,7 +1341,7 @@ class ShM_Pool: public std::conditional_t<
          *          的一致:
          *          - 零值会被替换为默认值;
          *          - 大小可能被取整到特定的粒度.
-         * @note example
+         * @note example:
          * ```
          * auto pools = ShM_Pool<false>{
          *     std::pmr::pool_options{
@@ -1360,7 +1359,7 @@ class ShM_Pool: public std::conditional_t<
          * @note 内存的释放仅代表 `Shared_Memory<true>` 的析构, 因此
          *       其它进程仍可能从这些内存中读取消息.  (See
          *       `Shared_Memory::~Shared_Memory()`.)
-         * @note example
+         * @note example:
          * ```
          * auto pools = ShM_Pool<false>{};
          * auto _ = pools.allocate(1);
