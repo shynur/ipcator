@@ -63,6 +63,7 @@
     }
 # endif
 #include <cstdint>  // uintptr_t
+#include <filesystem>  // filesystem::filesystem_error
 #include <functional>  // bind{_back,}, bit_or, plus
 #include <future>  // async, future_status::ready
 #include <iostream>  // clog
@@ -94,6 +95,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>  // make_error_code, errc::no_such_file_or_directory
 #include <thread>  // this_thread::sleep_for
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
@@ -171,7 +173,7 @@ class Shared_Memory: public std::span<
          * @warning POSIX 规定 `size` 不可为 0.
          * @details 根据 `name` 创建一个临时文件, 并将其映射到进程自身的
          *          RAM 中.  临时文件的文件描述符在构造函数返回前就会被删除.
-         * @warning `name` 不能和已有 POSIX shared memory 重复.
+         * @warning `name` 不能和已有 POSIX shared memory 重复, 否则会崩溃.
          * @note example (该 constructor 会推导类的模板实参):
          * ```
          * Shared_Memory shm{"/ipcator.Shared_Memory-creator", 1234};
@@ -192,7 +194,9 @@ class Shared_Memory: public std::span<
          *             从其它实例的 `Shared_Memory::get_name()` 方法获取.
          * @details 目标文件的描述符在构造函数返回前就会被删除.
          * @note 若目标文件不存在, 则每隔 20ms 查询一次, 持续至多 1s.
-         * @warning 若 1s 后目标文件仍未创建, 则程序可能崩溃.
+         * @exception 若 1s 后目标文件仍未创建, 抛出
+         *            `std::filesystem::filesystem_error` (no such file
+         *            or directory).
          * @note example (该 constructor 会推导类的模板实参):
          * ```
          * Shared_Memory creator{"/ipcator.1", 1};
@@ -201,7 +205,9 @@ class Shared_Memory: public std::span<
          * assert( std::size(accessor) == 1 );
          * ```
          */
-        Shared_Memory(const std::string name) requires(!creat)
+        Shared_Memory(const std::string name)
+            noexcept(noexcept(Shared_Memory::map_shm("")))
+            requires(!creat)
         : span{
             [&]
 #if __cplusplus <= 202002L
@@ -303,11 +309,12 @@ class Shared_Memory: public std::span<
 #if __cplusplus >= 202302L
         [[nodiscard]]
 #endif
-        static auto map_shm(
-            const std::string& name, const std::unsigned_integral auto... size
-        ) requires(sizeof...(size) == creat) {
+        static auto map_shm(const std::string& name, const std::unsigned_integral auto... size)
+            noexcept(!creat)  // 打开时可能会报 “no such file” 的错误.
+            requires(sizeof...(size) == creat)
+        {
             assert("/dev/shm"s.length() + name.length() <= 255);
-            const auto fd = [](const auto do_open) {
+            const auto fd = [&](const auto do_open) {
                 if constexpr (creat)
                     return do_open();
                 else {
@@ -323,14 +330,12 @@ class Shared_Memory: public std::span<
                     // 阻塞直至目标共享内存对象存在:
                     if (opening.wait_for(1s) == std::future_status::ready)
                         [[likely]] return opening.get();
-                    else {
-                        assert(!"共享内存对象 仍未被创建, 导致 reader 等待超时");
-#ifdef __cpp_lib_unreachable
-                        std::unreachable();
-#else
-                        return -1;
-#endif
-                    }
+                    else
+                        throw std::filesystem::filesystem_error{
+                            "共享内存对象 仍未被创建, 导致 accessor 等待超时",
+                            "/dev/shm" + name,
+                            std::make_error_code(std::errc::no_such_file_or_directory)
+                        };
                 }
             }(std::bind(
                 shm_open,
@@ -338,7 +343,9 @@ class Shared_Memory: public std::span<
                 (creat ? O_CREAT|O_EXCL : 0) | (writable ? O_RDWR : O_RDONLY),
                 0777
             ));
-            assert(fd != -1);
+#if __has_cpp_attribute(assume)
+            [[assume(fd != -1)]];
+#endif
 
             if constexpr (creat) {
                 // 设置 shm obj 的大小:
@@ -364,7 +371,7 @@ class Shared_Memory: public std::span<
                         ;
                     else {
                         struct stat shm;
-                        do {
+                        do [[unlikely]] {
                             fstat(fd, &shm);
                         } while (DEBUG_ && shm.st_size == 0);  // 等到 creator resize 完 shm obj.
                         return shm.st_size +
@@ -786,7 +793,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             if (alignment > getpagesize() + 0u) [[unlikely]] {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
-                    TooLargeAlignment(const std::size_t demanded_alignment) noexcept
+                    TooLargeAlignment(const std::size_t demanded_alignment)
                     : message{
                         std::format(
                             "请求分配的字节数组要求按 {} 对齐, 超出了页表大小 (即 {}).",
@@ -795,7 +802,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                         )
                     } {}
                     const char *what() const noexcept override {
-                        return message.c_str();
+                        return this->message.c_str();
                     }
                 };
                 throw TooLargeAlignment{alignment};
@@ -868,9 +875,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * @brief 实现移动语义.
          */
         ShM_Resource(ShM_Resource&& other) noexcept
-        : resources{
-            std::move(other.resources)
-        } {
+        : resources{std::move(other.resources)} {
             if constexpr (!using_ordered_set)
                 this->last_inserted = std::move(other.last_inserted);
         }
@@ -948,7 +953,13 @@ class ShM_Resource: public std::pmr::memory_resource {
             swap(*this, other);
             return *this;
         }
-        ~ShM_Resource() noexcept {
+        ~ShM_Resource() noexcept(noexcept(std::declval<Shared_Memory<false>>().~
+#if defined __GNUG__ && !defined __clang__  // 逆天 Clang 为什么要定义 `__GNU__`.
+            auto
+#else
+            Shared_Memory<false>
+#endif
+        ())) {
             if constexpr (DEBUG_) {
                 // 显式删除以触发日志输出.
                 while (!std::empty(this->resources)) {
@@ -1172,7 +1183,15 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             [[assume(initial_size)]];
 #endif
         }
-        ~Monotonic_ShM_Buffer() noexcept {
+        ~Monotonic_ShM_Buffer()
+            noexcept(noexcept(std::declval<ShM_Resource<std::unordered_set>>().~
+#if defined __GNUG__ && !defined __clang__  // 逆天 Clang 为什么要定义 `__GNU__`.
+                auto
+#else
+                ShM_Resource<std::unordered_set>
+#endif
+            ()))
+        {
             this->release();
             delete this->monotonic_buffer_resource::upstream_resource();
         }
@@ -1309,7 +1328,15 @@ class ShM_Pool: public std::conditional_t<
             },
             new ShM_Resource<std::set>,
         } {}
-        ~ShM_Pool() noexcept {
+        ~ShM_Pool()
+            noexcept(noexcept(std::declval<ShM_Resource<std::set>>().~
+#if defined __GNUG__ && !defined __clang__  // 逆天 Clang 为什么要定义 `__GNU__`.
+                auto
+#else
+                ShM_Resource<std::set>
+#endif
+            ()))
+        {
             this->release();
             delete this->midstream_pool_t::upstream_resource();
         }
