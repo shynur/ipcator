@@ -31,8 +31,11 @@
  *       因此 `ShM_Reader` 对 POSIX shared memory 的引用计数也有贡献, 且保证单个实例对同
  *       一片 POSIX shared memory 最多增加 **1** 个引用计数.  当 `ShM_Reader` 析构时, 释放
  *       所有资源 (所以也会将缓存过的 POSIX shared memory 的引用计数减一).
- * @warning 要构建 release 版本, 请在文件范围内定义 `NDEBUG` 宏 以删除诸多非必要的校验
- *          措施, 否则性能会非常差 且 编译时间增加.
+ * @warning 要构建 release 版本, 请在文件范围内定义以下宏, 否则性能会非常差:
+ *          - `NDEBUG`: 删除诸多非必要的校验措施, 减少编译时间;
+ *          - `IPCATOR_OFAST`: 额外优化.  可能会导致观测到 API 的行为发生变化, 但此类变化
+ *            通常无关紧要 (例如, 不判断 allocation 的 alignment 参数是否能被满足, 因为
+ *            基本不可能不满足).
  */
 
 #pragma once
@@ -120,19 +123,11 @@ using namespace std::literals;
 #ifndef __cpp_size_t_suffix
 # pragma GCC diagnostic push
 # pragma GCC diagnostic ignored "-Wliteral-suffix"
-    auto operator""uz(unsigned long long integer) -> std::size_t {
+    consteval auto operator""uz(unsigned long long integer) -> std::size_t {
         return integer;
     }
 # pragma GCC diagnostic pop
 #endif
-
-constexpr auto DEBUG_ =
-#ifdef NDEBUG
-    false
-#else
-    true
-#endif
-;
 
 
 inline namespace utils {
@@ -194,13 +189,19 @@ class Shared_Memory: public std::span<
          * static_assert( std::is_same_v<decltype(shm), Shared_Memory<true, true>> );
          * ```
          */
-        Shared_Memory(const std::string name, const std::size_t size) requires(creat)
-        : span{
+        Shared_Memory(
+            const std::string
+#ifdef IPCATOR_OFAST
+                             &
+#endif
+                               name, const std::size_t size
+        ) requires(creat): span{
             Shared_Memory::map_shm(name, size),
             size,
         }, name{name} {
-            if constexpr (DEBUG_)
+#ifndef NDEBUG
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m", *this) + '\n';
+#endif
         }
         /**
          * @brief 打开📂目标文件, 将其映射到 RAM 中.
@@ -219,9 +220,13 @@ class Shared_Memory: public std::span<
          * assert( std::size(accessor) == 1 );
          * ```
          */
-        Shared_Memory(const std::string name)
-            noexcept(noexcept(Shared_Memory::map_shm("")))
-            requires(!creat)
+        Shared_Memory(
+            const std::string
+#ifdef IPCATOR_OFAST
+                             &
+#endif
+                               name
+        ) noexcept(noexcept(Shared_Memory::map_shm(""))) requires(!creat)
         : span{
             [&]
 #if __cplusplus <= 202002L
@@ -232,8 +237,9 @@ class Shared_Memory: public std::span<
                 return {addr, length};
             }()
         }, name{name} {
-            if constexpr (DEBUG_)
+#ifndef NDEBUG
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
+#endif
         }
         /**
          * @brief 实现移动语义.
@@ -306,8 +312,9 @@ class Shared_Memory: public std::span<
                 std::size(*this)
             );
 
-            if constexpr (DEBUG_)
+#ifndef NDEBUG
                 std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m", *this) + '\n';
+#endif
         }
 
         /**
@@ -395,6 +402,9 @@ class Shared_Memory: public std::span<
                 [[assume(size)]];
 #endif
                 const auto area_addr = [&] {
+#ifdef IPCATOR_OFAST
+                    static constinit auto failed_because_of_exec = false;
+#endif
                     const auto mmapper = [&](bool use_prot_exec) {
                         return mmap(
                             nullptr, size,
@@ -404,8 +414,18 @@ class Shared_Memory: public std::span<
                         );
                     };
 
-                    auto addr = mmapper(true);
+                    auto addr = mmapper(
+#ifndef IPCATOR_OFAST
+                        true
+#else
+                        failed_because_of_exec ? false : true
+#endif
+                    );
                     if (addr == MAP_FAILED && errno == EPERM)
+#ifdef IPCATOR_OFAST
+                        [[unlikely]]  // 只会设置这么一次:
+                        failed_because_of_exec = true,
+#endif
                         addr = mmapper(false);
 
                     assert(addr != MAP_FAILED);
@@ -674,8 +694,11 @@ inline namespace utils {
 }
 
 
-#define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  void(  \
-    DEBUG_ && std::clog <<  \
+#ifdef NDEBUG
+# define IPCATOR_LOG_ALLO_OR_DEALLOC(color)
+#else
+# define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  void(  \
+    std::clog <<  \
         std::source_location::current().function_name() + "\n"s  \
         + std::vformat(  \
             (color == "green"sv ? "\033[32m" : "\033[31m")  \
@@ -683,6 +706,7 @@ inline namespace utils {
             std::make_format_args(size, (const void *const&)area, alignment)  \
         ) + '\n'  \
 )
+#endif
 
 
 /**
@@ -803,7 +827,11 @@ class ShM_Resource: public std::pmr::memory_resource {
 #endif
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
-        ) noexcept(false) override {
+        ) noexcept
+#ifndef IPCATOR_OFAST
+                  (false)
+#endif
+          override {
             if (alignment > getpagesize() + 0u) [[unlikely]] {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
@@ -974,15 +1002,14 @@ class ShM_Resource: public std::pmr::memory_resource {
             Shared_Memory<false>
 #endif
         ())) {
-            if constexpr (DEBUG_) {
-                // 显式删除以触发日志输出.
+#ifndef NDEBUG  // 显式删除以触发日志输出.
                 while (!std::empty(this->resources)) {
                     auto& area = *std::cbegin(this->resources);
                     this->deallocate(
                         (void *)std::data(area), std::size(area)
                     );
                 }
-            }
+#endif
         }
 
         /**
