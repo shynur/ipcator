@@ -3,12 +3,10 @@ using namespace literals;
 
 #include <cstring>
 
-extern "C" int shared_fn(int n) { return n * 2 + 1; }  // 要传递的函数.
-
 int main() {
     Monotonic_ShM_Buffer buf;  // 共享内存 buffer.
-    auto block = buf.allocate(0x33);  // 向 buffer 申请内存块.
-    std::memcpy((char *)block, (char *)shared_fn, 0x33);  // 向内存块写入数据.
+    auto block = buf.allocate(6);  // 向 buffer 申请内存块.
+    std::memcpy((char *)block, "Hello!", 6);  // 向内存块写入数据.
 
     // 这是 block 所在的 POSIX shared memory:
     auto& target_shm = buf.upstream_resource()->find_arena(block);

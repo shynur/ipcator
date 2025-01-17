@@ -103,7 +103,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>  // make_error_code, errc::no_such_file_or_directory
-#include <thread>  // this_thread::sleep_for
+#include <thread>  // this_thread::{sleep_for,yield}
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>
@@ -117,7 +117,14 @@
 
 
 using namespace std::literals;
-
+#ifndef __cpp_size_t_suffix
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wliteral-suffix"
+    auto operator""uz(unsigned long long integer) -> std::size_t {
+        return integer;
+    }
+# pragma GCC diagnostic pop
+#endif
 
 constexpr auto DEBUG_ =
 #ifdef NDEBUG
@@ -376,19 +383,11 @@ class Shared_Memory: public std::span<
                             [](auto size, ...) { return size; }(size...)
 #endif
                         ;
-                    else {
-                        struct stat shm;
-                        do [[unlikely]] {
-                            fstat(fd, &shm);
-                        } while (DEBUG_ && shm.st_size == 0);  // 等到 creator resize 完 shm obj.
-                        return shm.st_size +
-#ifdef __cpp_size_t_suffix
-                            0zu
-#else
-                            0ull
-#endif
-                        ;
-                    }
+                    else
+                        // 等到 creator resize 完 shm obj:
+                        for (struct stat shm; true; std::this_thread::yield())
+                            if (fstat(fd, &shm); shm.st_size) [[likely]]
+                                return shm.st_size + 0uz;
                 }()
             ] {
                 assert(size);
@@ -436,14 +435,13 @@ class Shared_Memory: public std::span<
          * @param num_col 列数
          * @param space 每个 byte 之间的填充字符串
          */
-#ifndef NDEBUG
         auto pretty_memory_view(
             const std::size_t num_col = 16, const std::string_view space = " "
         ) const {
-# if defined __cpp_lib_ranges_fold  \
-     && defined __cpp_lib_ranges_chunk  \
-     && defined __cpp_lib_ranges_join_with  \
-     && defined __cpp_lib_bind_back
+#if defined __cpp_lib_ranges_fold  \
+    && defined __cpp_lib_ranges_chunk  \
+    && defined __cpp_lib_ranges_join_with  \
+    && defined __cpp_lib_bind_back
             return std::ranges::fold_left(
                 this->area
                 | std::views::chunk(num_col)
@@ -459,7 +457,7 @@ class Shared_Memory: public std::span<
                 | std::views::join_with('\n'),
                 ""s, std::plus<>{}
             );
-# else
+#else
             std::vector<std::vector<std::string>> lines;
             std::vector<std::string> line;
             for (const auto& B : this->area) {
@@ -478,9 +476,8 @@ class Shared_Memory: public std::span<
             }
             view.pop_back();
             return view;
-# endif
-        }
 #endif
+        }
 
         /**
          * @brief 将 self 以类似 JSON 的格式输出.
