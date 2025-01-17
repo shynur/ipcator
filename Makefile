@@ -23,7 +23,7 @@ CXXFLAGS := -Iinclude  \
             $(if $(DEBUG), $(CXXDEBUG), -g0 -O3 -D'NDEBUG')
 
 LIBS := $(if $(shell  \
-             echo $$'%:if __has_include(<format>)\n%:else\n%:if __has_include(<experimental/format>)\n%:else\n"cannot find <format>";\n%:endif\n%:endif'  \
+             echo $$'%:if __has_include(<format>)\n%:elif __has_include(<experimental/format>)\n%:elif __has_include(<fmt/format.h>)\n%:else\n"cannot find <format>";\n%:endif\n'  \
              | $(CXX) -x c++ -E - | grep 'cannot find <format>' -  \
           ),fmt)
 LIBARS := $(LIBS:%=lib/archives/lib%.a)
