@@ -40,6 +40,7 @@
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint, memory_order_relaxed
 #include <cassert>
+#include <cerrno>  // EPERM, errno
 #include <chrono>
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
@@ -54,17 +55,17 @@
               experimental::make_format_args;
     }
 # elif __has_include("fmt/format.h")
-#   if __has_include(<fmt/format.h>)
-#     include <fmt/format.h>
+#   include "fmt/format.h"
+#   if FMT_VERSION < 10'00'00
+#       error "你的 `libfmt' 版本太低了"
 #   else
-#     include "fmt/format.h"
+        namespace std {
+            using ::fmt::format,
+                  ::fmt::formatter, ::fmt::format_error,
+                  ::fmt::vformat, ::fmt::vformat_to,
+                  ::fmt::make_format_args;
+        }
 #   endif
-    namespace std {
-        using ::fmt::format,
-              ::fmt::formatter, ::fmt::format_error,
-              ::fmt::vformat, ::fmt::vformat_to,
-              ::fmt::make_format_args;
-    }
 # else
 #   error "你需要首先升级编译器和 C++ library 以获得完整的 C++20 支持, 或安装 C++20 标准库 <format> 的替代品 fmtlib (见 <https://github.com/fmtlib/fmt>)"
 # endif
@@ -110,7 +111,7 @@
 #include <variant>  // monostate
 #include <version>
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
-#include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ}, MAP_{SHARED,FAILED,NORESERVE}
+#include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
 #include <unistd.h>  // close, ftruncate, getpagesize
 
@@ -394,14 +395,24 @@ class Shared_Memory: public std::span<
 #if __has_cpp_attribute(assume)
                 [[assume(size)]];
 #endif
-                const auto area_addr = (char *)mmap(
-                    nullptr, size,
-                    PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC,
-                    MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
-                    fd, 0
-                );
+                const auto area_addr = [&] {
+                    const auto mmapper = [&](bool use_prot_exec) {
+                        return mmap(
+                            nullptr, size,
+                            PROT_READ | (writable ? PROT_WRITE : 0) | (use_prot_exec ? PROT_EXEC : 0),
+                            MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
+                            fd, 0
+                        );
+                    };
+
+                    auto addr = mmapper(true);
+                    if (addr == MAP_FAILED && errno == EPERM)
+                        addr = mmapper(false);
+
+                    assert(addr != MAP_FAILED);
+                    return (char *)addr;
+                }();
                 close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
-                assert(area_addr != MAP_FAILED);
 
                 if constexpr (creat)
                     return area_addr;
