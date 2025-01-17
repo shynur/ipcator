@@ -53,14 +53,20 @@
               experimental::vformat, experimental::vformat_to,
               experimental::make_format_args;
     }
-# else
-#   include "fmt/format.h"
+# elif __has_include("fmt/format.h")
+#   if __has_include(<fmt/format.h>)
+#     include <fmt/format.h>
+#   else
+#     include "fmt/format.h"
+#   endif
     namespace std {
         using ::fmt::format,
               ::fmt::formatter, ::fmt::format_error,
               ::fmt::vformat, ::fmt::vformat_to,
               ::fmt::make_format_args;
     }
+# else
+#   error "你需要首先升级编译器和 C++ library 以获得完整的 C++20 支持, 或安装 C++20 标准库 <format> 的替代品 fmtlib (见 <https://github.com/fmtlib/fmt>)"
 # endif
 #include <cstdint>  // uintptr_t
 #include <filesystem>  // filesystem::filesystem_error
