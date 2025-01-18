@@ -2,6 +2,9 @@ SHELL = bash
 CXX := $(shell echo $${CXX:-g++}) -std=c++$(shell echo $${ISOCPP:-26})
 
 DEBUG != if (: $${NDEBUG:?}) 2> /dev/null; then :; else echo 1; fi
+LOG != if (: $${LOG:?}) 2> /dev/null; then echo 1; fi
+OFAST != if (: $${OFAST:?}) 2> /dev/null; then echo 1; fi
+
 CXXDEBUG = -O0 -ggdb -g3  \
            -fvar-tracking -gcolumn-info -femit-class-debug-always  \
            -gstatement-frontiers -fno-eliminate-unused-debug-types  \
@@ -20,7 +23,9 @@ CXXDIAGNO = -fdiagnostics-path-format=inline-events  \
 CXXFLAGS := -Iinclude  \
             -Wpedantic -Wall -W  \
             $(if $(DEBUG), $(CXXDIAGNO))  \
-            $(if $(DEBUG), $(CXXDEBUG), -g0 -O3 -D'NDEBUG')
+            $(if $(DEBUG), $(CXXDEBUG), -g0 -O3 -D'NDEBUG')  \
+            $(if $(LOG), -D'IPCATOR_LOG')  \
+            $(if $(OFAST), -D'IPCATOR_OFAST')
 
 LIBS := $(if $(shell  \
              echo $$'%:if __has_include(<format>)\n%:elif __has_include(<experimental/format>)\n%:else\n"cannot find <format>";\n%:endif\n'  \
@@ -29,7 +34,7 @@ LIBS := $(if $(shell  \
 LIBARS := $(LIBS:%=lib/archives/lib%.a)
 LDFLAGS := -pthread -lrt $(if $(LIBS), -l$(LIBS))
 
-BUILD_INFO := $(if $(DEBUG),beta,rc)-$(shell basename `echo $(CXX) | awk -F' ' '{printf $$1}'`)-C++$(shell echo $${ISOCPP:-26})
+BUILD_INFO := $(if $(LOG),with_log)-$(if $(DEBUG),,nocheck)-$(if $(OFAST),fast)-$(shell basename `echo $(CXX) | awk -F' ' '{printf $$1}'`)-C++$(shell echo $${ISOCPP:-26})
 
 # ----------------------------------------------------------
 
@@ -42,8 +47,7 @@ test:  bin/test-$(BUILD_INFO).exe
 ipc:  bin/ipc-writer-$(BUILD_INFO).exe  bin/ipc-reader-$(BUILD_INFO).exe
 	rm -f /dev/shm/*ipcator-?*
 	echo
-	@for exe in $^; do (./$$exe; echo) & done
-	@wait
+	@for exe in $^; do (./$$exe; echo) & done; wait
 
 
 bin/test-$(BUILD_INFO).exe:  src/test.cpp  include/ipcator.hpp  $(LIBARS) | bin/

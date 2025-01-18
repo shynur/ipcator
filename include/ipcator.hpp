@@ -32,14 +32,14 @@
  *       一片 POSIX shared memory 最多增加 **1** 个引用计数.  当 `ShM_Reader` 析构时, 释放
  *       所有资源 (所以也会将缓存过的 POSIX shared memory 的引用计数减一).
  * @warning 要构建 release 版本, 请在文件范围内定义以下宏, 否则性能会非常差:
- *          - `NDEBUG`: 删除诸多非必要的校验措施, 减少编译时间;
- *          - `IPCATOR_OFAST`: 额外优化.  可能会导致观测到 API 的行为发生变化, 但此类变化
- *            通常无关紧要 (例如, 不判断 allocation 的 alignment 参数是否能被满足, 因为
+ *          - `NDEBUG`: 删除诸多非必要的校验措施;
+ *          - `IPCATOR_OFAST`: 开启额外优化.  可能会导致观测到 API 的行为发生变化, 但此类
+ *            变化通常无关紧要 (例如, 不判断 allocation 的 alignment 参数是否能被满足, 因为
  *            基本不可能不满足).
+ * @note 定义 `IPCATOR_LOG` 宏可以打开日志.  调试用.
  */
 
 #pragma once
-// #defined NDEBUG
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint, memory_order_relaxed
 #include <cassert>
@@ -103,6 +103,7 @@
     }
 # endif
 #include <span>
+#include <stdexcept>  // invalid_argument
 #include <string>
 #include <string_view>
 #include <system_error>  // make_error_code, errc::no_such_file_or_directory
@@ -140,7 +141,7 @@ inline namespace utils {
      * std::cout << ceil_to_page_size(1);
      * ```
      */
-    inline auto ceil_to_page_size(const std::size_t min_length)
+    inline auto ceil_to_page_size(const std::size_t min_length) noexcept
     -> std::size_t {
         const auto current_num_pages = min_length / getpagesize();
         const bool need_one_more_page = min_length % getpagesize();
@@ -199,7 +200,7 @@ class Shared_Memory: public std::span<
             Shared_Memory::map_shm(name, size),
             size,
         }, name{name} {
-#ifndef NDEBUG
+#ifdef IPCATOR_LOG
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m", *this) + '\n';
 #endif
         }
@@ -237,7 +238,7 @@ class Shared_Memory: public std::span<
                 return {addr, length};
             }()
         }, name{name} {
-#ifndef NDEBUG
+#ifdef IPCATOR_LOG
                 std::clog << std::format("创建了 Shared_Memory: \033[32m{}\033[0m\n", *this) + '\n';
 #endif
         }
@@ -312,7 +313,7 @@ class Shared_Memory: public std::span<
                 std::size(*this)
             );
 
-#ifndef NDEBUG
+#ifdef IPCATOR_LOG
                 std::clog << std::format("析构了 Shared_Memory: \033[31m{}\033[0m", *this) + '\n';
 #endif
         }
@@ -694,10 +695,10 @@ inline namespace utils {
 }
 
 
-#ifdef NDEBUG
-# define IPCATOR_LOG_ALLO_OR_DEALLOC(color)
+#ifndef IPCATOR_LOG
+# define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  (void())
 #else
-# define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  void(  \
+# define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  (  \
     std::clog <<  \
         std::source_location::current().function_name() + "\n"s  \
         + std::vformat(  \
@@ -744,8 +745,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #elifdef __cpp_lib_unreachable
                 std::unreachable();
 #else
-                assert(false);
-                return bool{};
+                [] [[noreturn]] {}();
 #endif
             }
         }();  /// @endcond
@@ -785,9 +785,8 @@ class ShM_Resource: public std::pmr::memory_resource {
             set_t<Shared_Memory<true>, ShM_As_Addr>,
             set_t<Shared_Memory<true>, ShM_As_Addr, ShM_As_Addr>
         > resources;
-
     protected:
-#ifdef IPCATOR_IS_DOXYGENING  // stupid doxygen
+#ifdef IPCATOR_IS_BEING_DOXYGENING  // stupid doxygen
         /**
          * @brief 分配 POSIX shared memory.
          * @param alignment 对齐要求.
@@ -874,8 +873,16 @@ class ShM_Resource: public std::pmr::memory_resource {
             void *const area,
             const std::size_t size [[maybe_unused]],
             const std::size_t alignment [[maybe_unused]]
-        ) override {
+        )
+#ifdef IPCATOR_OFAST
+          noexcept
+#endif
+          override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
+
+            // 标准要求 allocation 与 deallocation 的 ‘alignment’ 要匹配, 否则是 undefined
+            // behavior.  我们没有记录 allocation 的 ‘alignment’ 值是多少, 但肯定不比📄页面大.
+            assert(alignment <= getpagesize() + 0u);
 
             const auto whatcanisay_shm_out = std::move(
                 this->resources
@@ -897,6 +904,8 @@ class ShM_Resource: public std::pmr::memory_resource {
 #endif
                 .value()
             );
+            // 标准要求 allocation 与 deallocation 的 ‘size’ 要匹配, 否则是 undefined
+            // behavior.  我们没有记录 allocation 的 ‘size’ 值是多少, 但肯定在此范围.
             assert(
                 size <= std::size(whatcanisay_shm_out)
                 && std::size(whatcanisay_shm_out) <= ceil_to_page_size(size)
@@ -1001,8 +1010,8 @@ class ShM_Resource: public std::pmr::memory_resource {
 #else
             Shared_Memory<false>
 #endif
-        ())) {
-#ifndef NDEBUG  // 显式删除以触发日志输出.
+            ())) {
+#ifdef IPCATOR_LOG  // 显式删除以触发日志输出.
                 while (!std::empty(this->resources)) {
                     auto& area = *std::cbegin(this->resources);
                     this->deallocate(
@@ -1030,12 +1039,12 @@ class ShM_Resource: public std::pmr::memory_resource {
          */
         auto get_resources(
 #ifndef __cpp_explicit_this_parameter
-        ) const -> decltype(auto) {
-            auto&& self = std::move(const_cast<ShM_Resource&>(*this));
+        ) const -> auto& {
+            return const_cast<ShM_Resource *>(this)->resources;
+        }
 #else
             this auto&& self
         ) -> decltype(auto) {
-#endif
             if constexpr (
                 std::disjunction<
                     std::is_lvalue_reference<decltype(self)>,
@@ -1046,6 +1055,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             else
                 return std::move(self.resources);
         }
+#endif
 
         /**
          * @brief 将 self 以类似 JSON 的格式输出.
@@ -1074,8 +1084,8 @@ class ShM_Resource: public std::pmr::memory_resource {
          *       - 是 `std::unordered_set` 时, 如果 `obj` 是
          *         最近一次 allocation 的内存块中的某个对象
          *         的指针, 则时间为 O(1); 否则为 O(N).
-         * @warning `obj` 必须确实位于来自此分配器分配的内存
-         *          中, 否则结果未定义.
+         * @exception 查找失败说明 ‘obj’ 不在此实例分配的
+         *            内存块上, 抛 `std::invalid_argument`.
          * @note example:
          * ```
          * auto allocator = ShM_Resource<std::set>{};
@@ -1089,7 +1099,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * );  // 都在同一片 POSIX shared memory 区域.
          * ```
          */
-        const auto& find_arena(const auto *const obj) const {
+        const auto& find_arena(const auto *const obj) const noexcept(false) {
             const auto obj_in_shm = [&](const auto& shm) {
                 return std::to_address(std::cbegin(shm)) <= (const char *)obj
                        && (const char *)(std::uintptr_t(obj)+1) <= std::to_address(std::cend(shm));
@@ -1097,16 +1107,17 @@ class ShM_Resource: public std::pmr::memory_resource {
             };
 
             if constexpr (using_ordered_set) {
-                const auto& shm = *(
-                    --this->resources.upper_bound((const void *)obj)
-                );
-                assert(obj_in_shm(shm));
-                return shm;
+                if (auto next_shm = this->resources.upper_bound((const void *)obj), shm = decltype(next_shm){};
+                    next_shm != std::cbegin(this->resources) && obj_in_shm(*(shm = --next_shm)))
+                    return *shm;
             } else {
                 if (obj_in_shm(*this->last_inserted))
                     return *this->last_inserted;
-                return *std::ranges::find_if(this->resources, obj_in_shm);
+                if (const auto target = std::ranges::find_if(this->resources, obj_in_shm);
+                    target != std::cend(this->resources))
+                    return *target;
             }
+            throw std::invalid_argument{"传入的 ‘obj’ 并不位于任何由该实例所分配的共享内存块上"};
         }
         private:
             friend struct std::formatter<ShM_Resource>;
@@ -1215,6 +1226,9 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
          * @warning `initial_size` 不可为 0.
          */
         Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
+#ifdef IPCATOR_OFAST
+        noexcept
+#endif
         : monotonic_buffer_resource{
             ceil_to_page_size(initial_size),
             new ShM_Resource<std::unordered_set>,
@@ -1258,7 +1272,11 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
     protected:
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
-        ) override {
+        )
+#ifdef IPCATOR_OFAST
+          noexcept
+#endif
+          override {
             const auto area = this->monotonic_buffer_resource::do_allocate(
                 size, alignment
             );
@@ -1270,11 +1288,13 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
+#ifndef IPCATOR_OFAST
             // 虚晃一枪; actually no-op.
             // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
             this->monotonic_buffer_resource::do_deallocate(area, size, alignment);
+#endif
         }
-#ifdef IPCATOR_IS_DOXYGENING  // stupid doxygen
+#ifdef IPCATOR_IS_BEING_DOXYGENING  // stupid doxygen
         /**
          * @brief 强制释放所有已分配而未收回的内存.
          * @details 将当前缓冲区和下个缓冲区的大小设置为其构造时的
@@ -1340,7 +1360,11 @@ class ShM_Pool: public std::conditional_t<
     protected:
         void *do_allocate(
             const std::size_t size, const std::size_t alignment
-        ) override {
+        )
+#ifdef IPCATOR_OFAST
+          noexcept
+#endif
+          override {
             const auto area = this->midstream_pool_t::do_allocate(
                 size, alignment
             );
@@ -1350,7 +1374,11 @@ class ShM_Pool: public std::conditional_t<
 
         void do_deallocate(
             void *const area, const std::size_t size, const std::size_t alignment
-        ) override {
+        )
+#ifdef IPCATOR_OFAST
+          noexcept
+#endif
+          override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
             this->midstream_pool_t::do_deallocate(area, size, alignment);
         }
@@ -1402,7 +1430,7 @@ class ShM_Pool: public std::conditional_t<
             );
         }
 
-#ifdef IPCATOR_IS_DOXYGENING  // stupid doxygen
+#ifdef IPCATOR_IS_BEING_DOXYGENING  // stupid doxygen
         /**
          * @brief 查看构造时指定的配置选项的实际值.
          * @details 这些选项的实际值未必和构造时提供
