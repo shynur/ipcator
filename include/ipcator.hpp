@@ -59,7 +59,7 @@
     }
 # elif __has_include("fmt/format.h")
 #   include "fmt/format.h"
-#   if FMT_VERSION < 10'00'00
+#   if FMT_VERSION < 10'00'00L
 #       error "你的 `libfmt' 版本太低了"
 #   else
         namespace std {
@@ -111,7 +111,12 @@
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>
-#include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
+# include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
+# ifndef __cpp_lib_unreachable
+    namespace std {
+        void unreachable [[noreturn]] () {}
+    }
+# endif
 #include <variant>  // monostate
 #include <version>
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
@@ -469,7 +474,7 @@ class Shared_Memory: public std::span<
                 | std::views::transform(
                     std::bind_back(
                         std::bit_or<>{},
-                        std::views::transform([](auto& B) {
+                        std::views::transform([](auto& B) static {
                             return std::format("{:02X}", B);
                         })
                         | std::views::join_with(space)
@@ -742,10 +747,8 @@ class ShM_Resource: public std::pmr::memory_resource {
             else {
 #if !__GNUG__ || __GNUC__ >= 13  // P2593R1
                 static_assert(false, "只接受 ‘std::{,unordered_}set’ 作为注册表格式.");
-#elifdef __cpp_lib_unreachable
-                std::unreachable();
 #else
-                [] [[noreturn]] {}();
+                std::unreachable();
 #endif
             }
         }();  /// @endcond
@@ -1152,7 +1155,7 @@ struct
         const auto resources_values =
 #if defined __cpp_lib_ranges_join_with && defined __cpp_lib_ranges_to_container
             resrc.get_resources()
-            | std::views::transform([](auto& shm) {return std::format("{}", shm);})
+            | std::views::transform([](auto& shm) static {return std::format("{}", shm);})
             | std::views::join_with(",\n"s)
             | std::ranges::to<std::string>()
 #else
