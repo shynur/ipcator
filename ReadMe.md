@@ -1,4 +1,4 @@
-## Get Started
+## Getting Started
 
 一个简单的示例, 在 reader 进程中执行 writer 进程里的函数
 (该示例未必能成功执行, 因为可能运行于 docker 等权限受限的环境中):
