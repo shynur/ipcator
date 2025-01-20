@@ -69,8 +69,8 @@ bin/ipc-%-$(BUILD_INFO).exe:  src/ipc-%.cpp  include/ipcator.hpp  $(LIBARS) | bi
 
 lib/archives/libfmt.a: | lib/fmt-build/  lib/archives/
 	cd lib/fmt-build;  \
-	CXX='$(CXX) -g0 -O3' cmake ../fmt;  \
-	make -j$$[1+`nproc`] fmt  # 不进行测试, 太浪费时间了.
+	CXX='$(CXX) -g0 -O3' cmake -D'FMT_TEST=false' ../fmt;  \
+	make -j$$[1+`nproc`]  # 不进行测试, 太浪费时间了.
 	mv lib/fmt-build/libfmt.a lib/archives/
 
 

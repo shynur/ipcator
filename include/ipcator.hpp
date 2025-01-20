@@ -114,7 +114,13 @@
 # include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
 # ifndef __cpp_lib_unreachable
     namespace std {
-        void unreachable [[noreturn]] () {}
+        [[noreturn]] inline void unreachable() {
+#  if defined _MSC_VER && !defined __clang__
+            __assume(false);
+#  else
+            __builtin_unreachable();
+#  endif
+        }
     }
 # endif
 #include <variant>  // monostate
@@ -129,7 +135,7 @@ using namespace std::literals;
 #ifndef __cpp_size_t_suffix
 # pragma GCC diagnostic push
 # pragma GCC diagnostic ignored "-Wliteral-suffix"
-    consteval auto operator""uz(unsigned long long integer) -> std::size_t {
+    consteval auto operator"" uz(unsigned long long integer) -> std::size_t {
         return integer;
     }
 # pragma GCC diagnostic pop
@@ -700,6 +706,7 @@ inline namespace utils {
 }
 
 
+// TODO: 时间戳
 #ifndef IPCATOR_LOG
 # define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  (void())
 #else
@@ -1042,8 +1049,14 @@ class ShM_Resource: public std::pmr::memory_resource {
          */
         auto get_resources(
 #ifndef __cpp_explicit_this_parameter
-        ) const -> auto& {
-            return const_cast<ShM_Resource *>(this)->resources;
+        ) const& -> auto& {
+            return this->resources;
+        }
+        auto& get_resources() const&& {
+            return this->resources;
+        }
+        auto get_resources() && {
+            return std::move(this->resources);
         }
 #else
             this auto&& self
@@ -1093,9 +1106,9 @@ class ShM_Resource: public std::pmr::memory_resource {
          * ```
          * auto allocator = ShM_Resource<std::set>{};
          * auto area = (char *)allocator.allocate(100);
-         * int& i = (int&)area[5],
-         *    & j = (int&)area[5 + sizeof(int)],
-         *    & k = (int&)area[5 + 2 * sizeof(int)];
+         * int& i = (int&)area[8],
+         *    & j = (int&)area[8 + sizeof(int)],
+         *    & k = (int&)area[8 + 2 * sizeof(int)];
          * assert(
          *     allocator.find_arena(&i).get_name() == allocator.find_arena(&j).get_name()
          *     && allocator.find_arena(&j).get_name() == allocator.find_arena(&k).get_name()

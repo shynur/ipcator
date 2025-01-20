@@ -70,9 +70,9 @@ allocator_2.deallocate(
 {
 auto allocator = ShM_Resource<std::set>{};
 auto area = (char *)allocator.allocate(100);
-int& i = (int&)area[5],
-   & j = (int&)area[5 + sizeof(int)],
-   & k = (int&)area[5 + 2 * sizeof(int)];
+int& i = (int&)area[8],
+   & j = (int&)area[8 + sizeof(int)],
+   & k = (int&)area[8 + 2 * sizeof(int)];
 assert(
     allocator.find_arena(&i).get_name() == allocator.find_arena(&j).get_name()
     && allocator.find_arena(&j).get_name() == allocator.find_arena(&k).get_name()
