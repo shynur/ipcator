@@ -53,13 +53,14 @@ ipc:  bin/ipc-writer-$(BUILD_INFO).exe  bin/ipc-reader-$(BUILD_INFO).exe
 bin/test-$(BUILD_INFO).exe:  src/test.cpp  include/ipcator.hpp  $(LIBARS) | bin/
 	mkdir -p /tmp/shynur/ipcator/;  \
 	if time  \
-	  $(CXX) -fdiagnostics-color=always $(CXXFLAGS) $< -L./lib/archives $(LDFLAGS) -o $@  \
-		2> /tmp/shynur/ipcator/Makefile.stderr; then  \
+		$(CXX) -fdiagnostics-color=always $(CXXFLAGS) $< -L./lib/archives $(LDFLAGS) -o $@  \
+		2> /tmp/shynur/ipcator/Makefile-stderr.txt; then  \
 		:;  \
 	else  \
 		LASTEXITCODE=$$?;  \
-		cat /tmp/shynur/ipcator/Makefile.stderr  \
+		cat /tmp/shynur/ipcator/Makefile-stderr.txt  \
 		| sed -e 's/warning:/😩🙏:/g' -e 's/error:/😭👊:/g';  \
+		rm /tmp/shynur/ipcator/Makefile-stderr.txt;  \
 		(exit $$LASTEXITCODE);  \
 	fi
 
@@ -109,3 +110,9 @@ print-vars:
 	@echo LIBARS = $(LIBARS)
 	@echo LDFLAGS = $(LDFLAGS)
 	@echo BUILD_INFO = $(BUILD_INFO)
+
+
+
+# Local Variables:
+# tab-width: 2
+# End:
