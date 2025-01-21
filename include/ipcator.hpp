@@ -37,6 +37,7 @@
  *            变化通常无关紧要 (例如, 不判断 allocation 的 alignment 参数是否能被满足, 因为
  *            基本不可能不满足).
  * @note 定义 `IPCATOR_LOG` 宏可以打开日志.  调试用.
+ * @note 定义 `IPCATOR_NAMESPACE` 宏可以将该文件内的所有 API 放到指定的命名空间.
  */
 
 #pragma once
@@ -132,6 +133,12 @@
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
+#ifndef IPCATOR_NAMESPACE
+# define IPCATOR_NAMESPACE
+#else
+  namespace IPCATOR_NAMESPACE {
+#endif
+
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
 # pragma GCC diagnostic push
@@ -1651,3 +1658,11 @@ struct ShM_Reader {
         std::unordered_set<Shared_Memory<false, writable>, ShM_As_Str, ShM_As_Str> cache;
         // TODO: LRU GC
 };
+
+#ifdef IPCATOR_NAMESPACE
+}
+#endif
+
+#if defined IPCATOR_USED_BY_SEER_RBK
+using namespace IPCATOR_NAMESPACE::literals;
+#endif
