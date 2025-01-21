@@ -1,8 +1,6 @@
 ?*~
 #?*#
 .#?*#
-/.vscode/*
-!/.vscode/c_cpp_properties.json
 
 /bin/
 /lib/?*-build/

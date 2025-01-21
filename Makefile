@@ -40,12 +40,12 @@ BUILD_INFO := $(if $(LOG),with_log)-$(if $(DEBUG),,nocheck)-$(if $(OFAST),fast)-
 
 .PHONY: test
 test:  bin/test-$(BUILD_INFO).exe
-	rm -f /dev/shm/*ipcator-?*
+	rm -f /dev/shm/*ipcator?*
 	@time $<
 
 .PHONY: ipc
 ipc:  bin/ipc-writer-$(BUILD_INFO).exe  bin/ipc-reader-$(BUILD_INFO).exe
-	rm -f /dev/shm/*ipcator-?*
+	rm -f /dev/shm/*ipcator?*
 	echo
 	@for exe in $^; do (./$$exe; echo) & done; wait
 
@@ -95,7 +95,7 @@ docs/html/index.html:  docs/Doxyfile.ini  include/ipcator.hpp | docs/
 .PHONY: clean
 clean:
 	rm -rf bin/
-	rm -f  /dev/shm/*ipcator-?*
+	rm -f  /dev/shm/*ipcator?*
 	rm -rf lib/?*-build/
 	rm -rf lib/archives/
 	rm -rf docs/html/

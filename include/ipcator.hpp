@@ -126,6 +126,7 @@
 #include <variant>  // monostate
 #include <version>
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
+#include <linux/limits.h>  // PATH_MAX
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat
 #include <unistd.h>  // close, ftruncate, getpagesize
@@ -346,7 +347,10 @@ class Shared_Memory: public std::span<
             noexcept(!creat)  // 打开时可能会报 “no such file” 的错误.
             requires(sizeof...(size) == creat)
         {
-            assert("/dev/shm"s.length() + name.length() <= 255);
+            assert(
+                name.length() <= 255
+                && ("/dev/shm" + name).length() <= PATH_MAX
+            );
             const auto fd = [&](const auto do_open) {
                 if constexpr (creat)
                     return do_open();
@@ -437,6 +441,9 @@ class Shared_Memory: public std::span<
 #ifdef IPCATOR_OFAST
                         [[unlikely]]  // 只会设置这么一次:
                         failed_because_of_exec = true,
+#endif
+#ifdef IPCATOR_LOG
+                        std::clog << "Failed to map shm as PROT_EXEC.\n",
 #endif
                         addr = mmapper(false);
 
@@ -635,19 +642,22 @@ inline namespace utils {
      *        路径名, 不知道该给共享内存起什么名字时就用它.
      * @see Shared_Memory::Shared_Memory(std::string, std::size_t)
      * @note 格式为 `/固定前缀-原子自增的计数字段-进程专属的标识符`.
-     * @details 名字的长度为 248, 加上偏移量 (`std::size_t`) 后正好 256.
-     *          248 足够大, 使得重名率几乎为 0; 256 刚好可以对齐, 提高
-     *          传递消息 (目标内存 + 偏移量) 的速度.
+     * @details 返回的名字的长度为 (31-8=23).  你可以将它转换成包含
+     *          NULL 字符的 c_str, 此时占用 24 bytes.  在传递消息时
+     *          需要告知接收方该消息所在的 POSIX shared memory 的
+     *          名字和消息在该 shared  memory 中的偏移量, 偏移量通常
+     *          是 `std::size_t` 类型, 因此加起来刚好 32 bytes.
      * @note example:
      * ```
      * auto name = generate_shm_UUName();
-     * assert( name.length() + 1 == 248 );  // 计算时包括 NULL 字符.
+     * assert( name.length() + 1 == 24 );  // 计算时包括 NULL 字符.
      * assert( name.front() == '/' );
      * std::cout << name << '\n';
      * ```
      */
     auto generate_shm_UUName() noexcept {
-        constexpr auto prefix = "github_dot_com_slash_shynur_slash_ipcator";
+        constexpr auto len_name = 31uz - sizeof(std::size_t);
+        constexpr auto prefix = "ipcator";
         constexpr auto available_chars = "0123456789"
                                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                                          "abcdefghijklmnopqrstuvwxyz"sv;
@@ -675,11 +685,11 @@ inline namespace utils {
 
         // 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
         // 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
-        // 所以生成的名字必须足够长, 📉降低碰撞率.
+        // 所以生成的名字必须足够长 (取决于 `suffix`), 📉降低碰撞率.
         static const auto suffix =
 #ifdef __cpp_lib_ranges_fold
             std::ranges::fold_left(
-                std::views::iota(("/dev/shm/" + base_name + '.').length(), 255u)
+                std::views::iota(('/' + base_name + '.').length(), len_name)
                 | std::views::transform([
                     available_chars,
                     gen = std::mt19937{std::random_device{}()},
@@ -694,19 +704,21 @@ inline namespace utils {
                 auto gen = std::mt19937{std::random_device{}()};
                 auto distri = std::uniform_int_distribution<>{0, available_chars.length()-1};
                 std::string suffix;
-                for (auto current_len = ("/dev/shm/" + base_name + '.').length(); current_len++ != 255u; )
+                for (auto current_len = ('/' + base_name + '.').length(); current_len++ != len_name; )
                     suffix += available_chars[distri(gen)];
                 return suffix;
             }()
 #endif
         ;
+        assert(suffix.length() >= 7);
 
-        return '/' + base_name + '.' + suffix;
+        auto&& full_name = '/' + base_name + '.' + suffix;
+        assert(full_name.length() == len_name);
+        return full_name;
     }
 }
 
 
-// TODO: 时间戳
 #ifndef IPCATOR_LOG
 # define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  (void())
 #else

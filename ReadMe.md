@@ -14,19 +14,20 @@ extern "C" int shared_fn(int n) { return n * 2 + 1; }  // 要传递的函数.
 
 int main() {
     Monotonic_ShM_Buffer buf;  // 共享内存 buffer.
-    auto block = buf.allocate(0x33);  // 向 buffer 申请内存块.
-    std::memcpy((char *)block, (char *)shared_fn, 0x33);  // 向内存块写入数据.
+    const auto block = buf.allocate(0x50);  // 向 buffer 申请内存块.
+    std::memcpy((char *)block, (char *)shared_fn, 0x50);  // 向内存块写入数据.
 
-    // 这是 block 所在的 POSIX shared memory:
-    auto& target_shm = buf.upstream_resource()->find_arena(block);
+    // 查找 block 所在的 POSIX shared memory:
+    const auto& target_shm = buf.upstream_resource()->find_arena(block);
+    // block 在 POSIX shared memory 中的 偏移量:
+    const std::size_t offset = (char *)block - std::data(target_shm);
 
-    // 事先约定的共享内存 vvvvvvvvvvvvvvvv, 用来存放 target_shm 的路径名:
-    auto name_passer = "/ipcator.target-name"_shm[248];
-    // 将 target_shm 的路径名拷贝到 name_passer 中:
-    std::strcpy(std::data(name_passer), target_shm.get_name().c_str());
-
-    auto offset_passer = "/ipcator.msg-offset"_shm[sizeof(std::size_t)];
-    (std::size_t&)offset_passer[0] = (char *)block - std::data(target_shm);
+    // 事先约定的共享内存 vvvvvvvvvvvvvvvv, 用来存放消息的位置区域和偏移量:
+    const auto descriptor = "/ipcator.msg_descriptor"_shm[32];
+    (std::pair<std::array<char, 24>, std::size_t>&)descriptor[0] = {
+        *(std::array<char, 24> *)target_shm.get_name().c_str(),
+        offset
+    };
 
     std::this_thread::sleep_for(1s);  // 等待 reader 获取消息.
 }
@@ -39,12 +40,11 @@ using namespace literals;
 
 int main() {
     std::this_thread::sleep_for(0.3s);  // 等 writer 先创建好消息.
+    const auto descriptor = -"/ipcator.msg_descriptor"_shm;
+    const auto& [name, offset] = (std::pair<std::array<char, 24>, std::size_t>&)descriptor[0];
 
     ShM_Reader rd;
-    auto& mul2_add1 = rd.template read<int(int)>(
-        std::data(-"/ipcator.target-name"_shm),  // 目标共享内存的路径名.
-        (std::size_t&)(-"/ipcator.msg-offset"_shm)[0]  // 消息的偏移量.
-    );  // 获取函数.
+    const auto& mul2_add1 = rd.template read<int(int)>(name.data(), offset);
 
     std::this_thread::sleep_for(1.3s);  // 这时 writer 进程已经退出了, 当我们仍能读取消息:
     std::cout << "\n[[[ 42 x 2 + 1 = " << mul2_add1(42) << " ]]]\n\n\n";
@@ -158,7 +158,3 @@ make test ipc
 
 降级 [`$ISOCPP`](###### "-std=c++$ISOCPP") 编译时, **无法实现所有语义** (例如封装性与 *const* 方法的重载).  <br />
 特别是, 形如 异质查找 ([P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)) 等新的 STL 算法可能会被手工编写的代码代替, 严重降低性能.
-
-## Misc
-
-`.vscode/c_cpp_properties.json` 文件是我自个儿用的.

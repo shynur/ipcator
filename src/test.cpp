@@ -112,7 +112,7 @@ std::cout << ceil_to_page_size(1);
 }
 {
 auto name = generate_shm_UUName();
-assert( name.length() + 1 == 248 );  // 计算时包括 NULL 字符.
+assert( name.length() + 1 == 24 );  // 计算时包括 NULL 字符.
 assert( name.front() == '/' );
 std::cout << name << '\n';
 }
