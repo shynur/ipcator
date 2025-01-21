@@ -133,10 +133,8 @@
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
-#ifndef IPCATOR_NAMESPACE
-# define IPCATOR_NAMESPACE
-#else
-  namespace IPCATOR_NAMESPACE {
+#ifdef IPCATOR_NAMESPACE
+namespace IPCATOR_NAMESPACE {
 #endif
 
 using namespace std::literals;
@@ -652,7 +650,7 @@ inline namespace utils {
      * @details 返回的名字的长度为 (31-8=23).  你可以将它转换成包含
      *          NULL 字符的 c_str, 此时占用 24 bytes.  在传递消息时
      *          需要告知接收方该消息所在的 POSIX shared memory 的
-     *          名字和消息在该 shared  memory 中的偏移量, 偏移量通常
+     *          名字和消息在该 shared memory 中的偏移量, 偏移量通常
      *          是 `std::size_t` 类型, 因此加起来刚好 32 bytes.
      * @note example:
      * ```
@@ -1664,5 +1662,9 @@ struct ShM_Reader {
 #endif
 
 #if defined IPCATOR_USED_BY_SEER_RBK
-using namespace IPCATOR_NAMESPACE::literals;
+using namespace
+# ifdef IPCATOR_NAMESPACE
+                IPCATOR_NAMESPACE::
+# endif
+                                   literals;
 #endif
