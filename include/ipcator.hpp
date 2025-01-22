@@ -635,7 +635,7 @@ namespace literals {
      * assert( reader[9] == 9 );
      * ```
      */
-    auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
+    inline auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
         struct ShM_Constructor_Proxy {
             const char *const name;
             auto operator[](const std::size_t size) const {
