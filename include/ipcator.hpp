@@ -672,7 +672,7 @@ inline namespace utils {
      * std::cout << name << '\n';
      * ```
      */
-    auto generate_shm_UUName() noexcept {
+    inline auto generate_shm_UUName() noexcept {
         constexpr auto len_name = 31uz - sizeof(std::size_t);
         constexpr auto prefix = "ipcator";
         constexpr auto available_chars = "0123456789"
