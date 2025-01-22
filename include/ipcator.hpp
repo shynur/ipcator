@@ -1223,7 +1223,7 @@ struct
                 std::make_format_args(size)
             );
         else {
-            const auto last_inserted = size ? std::format("\n{}", *resrc.last_inserted) : "null"s;
+            const auto last_inserted = size ? std::format("\n{}", *resrc.last_inserted) : std::string{"null"};
             return std::vformat_to(
                 context.out(),
                 R":({{
