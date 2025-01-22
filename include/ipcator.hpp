@@ -134,15 +134,17 @@
 
 
 #ifdef IPCATOR_NAMESPACE
-  namespace IPCATOR_NAMESPACE {
-# define IPCATOR_OUTSIDE_NAMESPACE(statements)  \
-  }  \
-  statements  \
-  namespace IPCATOR_NAMESPACE {
+# define IPCATOR_OPEN_NAMESPACE  namespace IPCATOR_NAMESPACE {
+# define IPCATOR_CLOSE_NAMESPACE }
 #else
-# define IPCATOR_OUTSIDE_NAMESPACE(statements)  statements
+# define IPCATOR_OPEN_NAMESPACE
+# define IPCATOR_CLOSE_NAMESPACE
 #endif
+
+
 
+IPCATOR_OPEN_NAMESPACE
+
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
     consteval auto operator"" uz(unsigned long long integer) -> std::size_t {
@@ -553,7 +555,8 @@ static_assert(
     && !std::copy_constructible<Shared_Memory<false, true>>
 );
 
-IPCATOR_OUTSIDE_NAMESPACE(template <auto creat, auto writable>
+IPCATOR_CLOSE_NAMESPACE
+template <auto creat, auto writable>
 struct
 #if !(defined __GNUG__ && __GNUC__ <= 15)
     ::
@@ -610,7 +613,8 @@ struct
             )
         );
     }
-};)
+};
+IPCATOR_OPEN_NAMESPACE
 
 namespace literals {
     /**
@@ -1176,7 +1180,8 @@ class ShM_Resource: public std::pmr::memory_resource {
 static_assert( std::movable<ShM_Resource<std::set>> );
 static_assert( std::movable<ShM_Resource<std::unordered_set>> );
 
-IPCATOR_OUTSIDE_NAMESPACE(template <template <typename... T> class set_t>
+IPCATOR_CLOSE_NAMESPACE
+template <template <typename... T> class set_t>
 struct
 #if !(defined __GNUG__ && __GNUC__ <= 15)
     ::
@@ -1211,7 +1216,7 @@ struct
             }()
 #endif
         ;
-        if constexpr (ShM_Resource<set_t>::using_ordered_set)
+        if constexpr (decltype(resrc)::using_ordered_set)
             return std::vformat_to(
                 context.out(),
                 R":({{ "resources": {{ "|size|": {} }}, "constructor()": "ShM_Resource<std::set>" }}):",
@@ -1241,7 +1246,8 @@ struct
             );
         }
     }
-};)
+};
+IPCATOR_OPEN_NAMESPACE
 
 
 /**
@@ -1669,11 +1675,9 @@ struct ShM_Reader {
         std::unordered_set<Shared_Memory<false, writable>, ShM_As_Str, ShM_As_Str> cache;
         // TODO: LRU GC
 };
-
-#ifdef IPCATOR_NAMESPACE
-}
-#endif
 
+IPCATOR_CLOSE_NAMESPACE
+
 
 
 #if defined IPCATOR_USED_BY_SEER_RBK
