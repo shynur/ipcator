@@ -139,12 +139,9 @@ namespace IPCATOR_NAMESPACE {
 
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
-# pragma GCC diagnostic push
-# pragma GCC diagnostic ignored "-Wliteral-suffix"
     consteval auto operator"" uz(unsigned long long integer) -> std::size_t {
         return integer;
     }
-# pragma GCC diagnostic pop
 #endif
 
 
