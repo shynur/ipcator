@@ -1664,4 +1664,5 @@ using namespace
                 IPCATOR_NAMESPACE::
 # endif
                                    literals;
+using namespace std::literals;
 #endif
