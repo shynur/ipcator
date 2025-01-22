@@ -134,7 +134,13 @@
 
 
 #ifdef IPCATOR_NAMESPACE
-namespace IPCATOR_NAMESPACE {
+  namespace IPCATOR_NAMESPACE {
+# define IPCATOR_OUTSIDE_NAMESPACE(statements)  \
+  }  \
+  statements  \
+  namespace IPCATOR_NAMESPACE {
+#else
+# define IPCATOR_OUTSIDE_NAMESPACE(statements)  statements
 #endif
 
 using namespace std::literals;
@@ -547,12 +553,17 @@ static_assert(
     && !std::copy_constructible<Shared_Memory<false, true>>
 );
 
-template <auto creat, auto writable>
+IPCATOR_OUTSIDE_NAMESPACE(template <auto creat, auto writable>
 struct
 #if !(defined __GNUG__ && __GNUC__ <= 15)
     ::
 #endif
-    std::formatter<Shared_Memory<creat, writable>> {
+    std::formatter<
+#ifdef IPCATOR_NAMESPACE
+        IPCATOR_NAMESPACE::
+#endif
+                           Shared_Memory<creat, writable>
+    > {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
             throw std::format_error("不支持任何格式化动词.");
@@ -599,7 +610,7 @@ struct
             )
         );
     }
-};
+};)
 
 namespace literals {
     /**
@@ -1165,12 +1176,17 @@ class ShM_Resource: public std::pmr::memory_resource {
 static_assert( std::movable<ShM_Resource<std::set>> );
 static_assert( std::movable<ShM_Resource<std::unordered_set>> );
 
-template <template <typename... T> class set_t>
+IPCATOR_OUTSIDE_NAMESPACE(template <template <typename... T> class set_t>
 struct
 #if !(defined __GNUG__ && __GNUC__ <= 15)
     ::
 #endif
-    std::formatter<ShM_Resource<set_t>> {
+    std::formatter<
+#ifdef IPCATOR_NAMESPACE
+        IPCATOR_NAMESPACE::
+#endif
+                           ShM_Resource<set_t>
+    > {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
             throw std::format_error("不支持任何格式化动词.");
@@ -1225,7 +1241,7 @@ struct
             );
         }
     }
-};
+};)
 
 
 /**
@@ -1657,6 +1673,8 @@ struct ShM_Reader {
 #ifdef IPCATOR_NAMESPACE
 }
 #endif
+
+
 
 #if defined IPCATOR_USED_BY_SEER_RBK
 using namespace
