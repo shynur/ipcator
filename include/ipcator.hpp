@@ -588,13 +588,7 @@ struct std::formatter<
         }();
         const auto addr = (const void *)std::data(shm);
         const auto length = std::size(shm);
-        const auto name = [&] {
-            const auto name = shm.get_name();
-            if (name.length() <= 57)
-                return name;
-            else
-                return name.substr(0, 54) + "...";
-        }();
+        const auto name = shm.get_name();
         return std::vformat_to(
             context.out(),
             R":({{
@@ -654,7 +648,7 @@ inline namespace utils {
      * @brief 创建一个 **全局唯一** 的 POSIX shared memory
      *        路径名, 不知道该给共享内存起什么名字时就用它.
      * @see Shared_Memory::Shared_Memory(std::string, std::size_t)
-     * @note 格式为 `/固定前缀-原子自增的计数字段-进程专属的标识符`.
+     * @note 格式为 `/固定前缀-进程专属的标识符-原子自增的计数字段`.
      * @details 返回的名字的长度为 (31-8=23).  你可以将它转换成包含
      *          NULL 字符的 c_str, 此时占用 24 bytes.  在传递消息时
      *          需要告知接收方该消息所在的 POSIX shared memory 的
@@ -670,39 +664,26 @@ inline namespace utils {
      */
     inline auto generate_shm_UUName() noexcept {
         constexpr auto len_name = 31uz - sizeof(std::size_t);
+
         constexpr auto prefix = "ipcator";
-        constexpr auto available_chars = "0123456789"
-                                         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                                         "abcdefghijklmnopqrstuvwxyz"sv;
 
         // 在 shm obj 的名字中包含一个顺序递增的计数字段:
         constinit static std::atomic_uint cnt;
-        const auto base_name =
-#ifdef __cpp_lib_format
-            std::format(
-                "{}-{:06}", prefix,
-                1 + cnt.fetch_add(1, std::memory_order_relaxed)
-            )
-#else
-            prefix + "-"s
-            + [&] {
-                auto seq_id = std::to_string(
-                    1 + cnt.fetch_add(1, std::memory_order_relaxed)
-                );
-                while (seq_id.length() != 6)
-                    seq_id.insert(seq_id.cbegin(), '0');
-                return seq_id;
-            }()
-#endif
-        ;
+        const auto suffix = std::format(
+            "{:06}",
+            1 + cnt.fetch_add(1, std::memory_order_relaxed)
+        );
 
+        constexpr auto available_chars = "0123456789"
+                                         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                         "abcdefghijklmnopqrstuvwxyz"sv;
         // 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
         // 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
-        // 所以生成的名字必须足够长 (取决于 `suffix`), 📉降低碰撞率.
-        static const auto suffix =
+        // 所以生成的名字必须足够长 (取决于 `infix`), 📉降低碰撞率.
+        static const auto infix =
 #ifdef __cpp_lib_ranges_fold
             std::ranges::fold_left(
-                std::views::iota(('/' + base_name + '.').length(), len_name)
+                std::views::iota(("/"s + prefix + '.' + '.' + suffix).length(), len_name)
                 | std::views::transform([
                     available_chars,
                     gen = std::mt19937{std::random_device{}()},
@@ -716,16 +697,16 @@ inline namespace utils {
             [&] {
                 auto gen = std::mt19937{std::random_device{}()};
                 auto distri = std::uniform_int_distribution<>{0, available_chars.length()-1};
-                std::string suffix;
-                for (auto current_len = ('/' + base_name + '.').length(); current_len++ != len_name; )
-                    suffix += available_chars[distri(gen)];
-                return suffix;
+                std::string infix;
+                for (auto current_len = ("/"s + prefix + '.' + '.' + suffix).length(); current_len++ != len_name; )
+                    infix += available_chars[distri(gen)];
+                return infix;
             }()
 #endif
         ;
-        assert(suffix.length() >= 7);
+        assert(infix.length() >= 7);
 
-        auto&& full_name = '/' + base_name + '.' + suffix;
+        auto&& full_name = "/"s + prefix + '.' + infix + '.' + suffix;
         assert(full_name.length() == len_name);
         return full_name;
     }
