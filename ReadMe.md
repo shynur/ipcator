@@ -145,10 +145,10 @@ make test ipc
 
 ## 用法
 
-> 直接 <code>#include "<a href="./include/ipcator.hpp">ipcator.hpp</a>"</code>.
+> <code>#define IPCATOR_NAMESPACE some_namespace
+> #include "<a href="./include/ipcator.hpp">ipcator.hpp</a>"</code>
 
-可公开的 API 默认置于 *global namespace*.
-自己到头文件中用期望的 namespace 块包裹住主体代码即可.
+如果 `IPCATOR_NAMESPACE` 宏 未定义, 则 API 置于 *global namespace*.
 
 ### API 使用示例
 
