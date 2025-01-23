@@ -557,15 +557,11 @@ static_assert(
 
 IPCATOR_CLOSE_NAMESPACE
 template <auto creat, auto writable>
-struct
-#if !(defined __GNUG__ && __GNUC__ <= 15)
-    ::
-#endif
-    std::formatter<
+struct std::formatter<
 #ifdef IPCATOR_NAMESPACE
         IPCATOR_NAMESPACE::
 #endif
-                           Shared_Memory<creat, writable>
+        Shared_Memory<creat, writable>
     > {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
@@ -1182,15 +1178,11 @@ static_assert( std::movable<ShM_Resource<std::unordered_set>> );
 
 IPCATOR_CLOSE_NAMESPACE
 template <template <typename... T> class set_t>
-struct
-#if !(defined __GNUG__ && __GNUC__ <= 15)
-    ::
-#endif
-    std::formatter<
+struct std::formatter<
 #ifdef IPCATOR_NAMESPACE
         IPCATOR_NAMESPACE::
 #endif
-                           ShM_Resource<set_t>
+        ShM_Resource<set_t>
     > {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
