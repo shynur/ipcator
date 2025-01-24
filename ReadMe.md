@@ -1,55 +1,10 @@
 ## Getting Started
 
 一个简单的示例, 在 reader 进程中执行 writer 进程里的函数
-(该示例未必能成功执行, 因为可能运行于 docker 等权限受限的环境中):
+(该示例未必能成功执行, 因为可能运行于容器 (参见 docker `--tmpfs` 参数) 等权限受限的环境中):
 
-```cpp
-// writer.cpp
-#include "ipcator.hpp"
-using namespace literals;
-
-#include <cstring>
-
-extern "C" int shared_fn(int n) { return n * 2 + 1; }  // 要传递的函数.
-
-int main() {
-    Monotonic_ShM_Buffer buf;  // 共享内存 buffer.
-    const auto block = buf.allocate(0x50);  // 向 buffer 申请内存块.
-    std::memcpy((char *)block, (char *)shared_fn, 0x50);  // 向内存块写入数据.
-
-    // 查找 block 所在的 POSIX shared memory:
-    const auto& target_shm = buf.upstream_resource()->find_arena(block);
-    // block 在 POSIX shared memory 中的 偏移量:
-    const std::size_t offset = (char *)block - std::data(target_shm);
-
-    // 事先约定的共享内存 vvvvvvvvvvvvvvvv, 用来存放消息的位置区域和偏移量:
-    const auto descriptor = "/ipcator.msg_descriptor"_shm[32];
-    (std::pair<std::array<char, 24>, std::size_t>&)descriptor[0] = {
-        *(std::array<char, 24> *)target_shm.get_name().c_str(),
-        offset
-    };
-
-    std::this_thread::sleep_for(1s);  // 等待 reader 获取消息.
-}
-```
-
-```cpp
-// reader.cpp
-#include "ipcator.hpp"
-using namespace literals;
-
-int main() {
-    std::this_thread::sleep_for(0.3s);  // 等 writer 先创建好消息.
-    const auto descriptor = -"/ipcator.msg_descriptor"_shm;
-    const auto& [name, offset] = (std::pair<std::array<char, 24>, std::size_t>&)descriptor[0];
-
-    ShM_Reader rd;
-    const auto& mul2_add1 = rd.template read<int(int)>(name.data(), offset);
-
-    std::this_thread::sleep_for(1.3s);  // 这时 writer 进程已经退出了, 当我们仍能读取消息:
-    std::cout << "\n[[[ 42 x 2 + 1 = " << mul2_add1(42) << " ]]]\n\n\n";
-}
-```
+<https://github.com/shynur/ipcator/blob/06157d0424398060a2dbd6797f96e7395fb9b11b/src/ipc-writer.cpp#L1-L21>
+<https://github.com/shynur/ipcator/blob/06157d0424398060a2dbd6797f96e7395fb9b11b/src/ipc-reader.cpp#L1-L14>
 
 你可自己手动编译执行; 也可根据 [测试双进程间的通信](#测试双进程间的通信) 的提示,
 将以上两段代码分别填到 [`src`](./src/) 目录下的 `ipc-*.cpp` 文件中,
