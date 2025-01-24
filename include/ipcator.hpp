@@ -862,7 +862,9 @@ class ShM_Resource: public std::pmr::memory_resource {
                         return this->message.c_str();
                     }
                 };
+#ifndef IPCATOR_OFAST
                 throw TooLargeAlignment{alignment};
+#endif
             }
 
             const auto [inserted, ok] = this->resources.emplace(
