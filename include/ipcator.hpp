@@ -147,7 +147,7 @@ IPCATOR_OPEN_NAMESPACE
 
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
-    consteval auto operator"" uz(unsigned long long integer) -> std::size_t {
+    consteval auto operator "" uz(unsigned long long integer) -> std::size_t {
         return integer;
     }
 #endif
