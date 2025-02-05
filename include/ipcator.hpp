@@ -1589,7 +1589,7 @@ struct ShM_Reader {
 
         auto select_shm(const std::string_view name) -> const
 #if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 20)  // ipcator#3
-            Shared_Memory<false>
+            Shared_Memory<false, writable>
 #else
             auto
 #endif
