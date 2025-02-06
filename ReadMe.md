@@ -4,7 +4,7 @@
 (该示例未必能成功执行, 因为可能运行于容器 (参见 docker `--tmpfs` 参数) 等权限受限的环境中):
 
 <https://github.com/shynur/ipcator/blob/717fe3cd3a39519d66e59dcf97bcbd04c0893fcc/src/ipc-writer.cpp#L1-L21>
-<https://github.com/shynur/ipcator/blob/717fe3cd3a39519d66e59dcf97bcbd04c0893fcc/src/ipc-reader.cpp#L1-L14>
+<https://github.com/shynur/ipcator/blob/717fe3cd3a39519d66e59dcf97bcbd04c0893fcc/src/ipc-reader.cpp#L1-L13>
 
 你可自己手动编译执行; 也可根据 [测试双进程间的通信](#测试双进程间的通信) 的提示,
 将以上两段代码分别填到 [`src`](./src/) 目录下的 `ipc-*.cpp` 文件中,
