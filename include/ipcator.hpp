@@ -147,9 +147,15 @@ IPCATOR_OPEN_NAMESPACE
 
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
+# ifdef IPCATOR_USED_BY_SEER_RBK
+#   pragma clang diagnostic ignored "-Wc++2b-extensions"  // "warning: 'size_t' suffix for literals is a C++2b extension"
+#   pragma clang diagnostic push
+#   pragma clang diagnostic ignored "-Wuser-defined-literals"
     consteval auto operator "" uz(unsigned long long integer) -> std::size_t {
         return integer;
     }
+#   pragma clang diagnostic pop
+# endif
 #endif
 
 
