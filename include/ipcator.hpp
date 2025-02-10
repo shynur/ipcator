@@ -129,7 +129,7 @@
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
 #include <linux/limits.h>  // PATH_MAX
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
-#include <sys/stat.h>  // fstat, struct stat
+#include <sys/stat.h>  // fstat, struct stat, fchmod
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
@@ -398,6 +398,9 @@ class Shared_Memory: public std::span<
             ));
 #if __has_cpp_attribute(assume)
             [[assume(fd != -1)]];
+#endif
+#ifdef IPCATOR_USED_BY_SEER_RBK
+            fchmod(fd, 0777);
 #endif
 
             if constexpr (creat) {
