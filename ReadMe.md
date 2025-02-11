@@ -3,12 +3,12 @@
 一个简单的示例, 在 reader 进程中执行 writer 进程里的函数
 (该示例未必能成功执行, 因为可能运行于容器 (参见 docker `--tmpfs` 参数) 等权限受限的环境中):
 
-<https://github.com/shynur/ipcator/blob/717fe3cd3a39519d66e59dcf97bcbd04c0893fcc/src/ipc-writer.cpp#L1-L21>
-<https://github.com/shynur/ipcator/blob/717fe3cd3a39519d66e59dcf97bcbd04c0893fcc/src/ipc-reader.cpp#L1-L13>
+<https://github.com/shynur/ipcator/blob/80877e5861182402f079f15210fd6115d0150ba1/src/ipc-writer.cpp#L1-L21>
+<https://github.com/shynur/ipcator/blob/80877e5861182402f079f15210fd6115d0150ba1/src/ipc-reader.cpp#L1-L13>
 
 你可自己手动编译执行; 也可根据 [测试双进程间的通信](#测试双进程间的通信) 的提示,
 将以上两段代码分别填到 [`src`](./src/) 目录下的 `ipc-*.cpp` 文件中,
-再在仓库目录用 `NDEBUG=1 CXX=g++-10 ISOCPP=20 make ipc` (自己调整 `CXX` 和 `ISOCPP`) 自动执行.
+再在仓库目录用 `NDEBUG=1 CXX=g++-10 ISOCPP=2a make ipc` (自己调整 `CXX` 和 `ISOCPP`) 自动执行.
 
 ## 功能
 
@@ -47,7 +47,7 @@ IPCator 抗拒使用第三方库,
 
 #### `<format>` ➡️ `fmt/format.h`
 
-C++20 开始提供 `<format>`, 但 `g++-10 -std=c++20` 实际只支持部分新特性.
+C++20 开始提供 `<format>`, 但 `g++-10 -std=c++2a` 实际只支持部分新特性.
 
 通过执行 `make print-vars | grep LIBS -` 查看 `LIBS` 变量中是否包含 `fmt`.
 如果*是*, 说明本地缺少 `<format>` 库, 需要额外执行:
@@ -89,7 +89,7 @@ NDEBUG=1 make ipc
 
 ```bash
 export CXX=clang++-20  # 替换编译器为 LLVM Clang
-export ISOCPP=20  # 使用 C++20
+export ISOCPP=2a  # 使用 C++2a
 export NDEBUG=1  # 如果不使用 GCC, 那么这一步是必须的!
 # 这 ^^^^^^^^^^^ 会排除许多独属 GCC 而 Clang 无法识别的 debug 选项.
 make clean  # 删除用原来的编译器生成的链接库 e.g. `libfmt`.

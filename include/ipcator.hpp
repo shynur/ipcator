@@ -1631,7 +1631,7 @@ struct ShM_Reader {
 
         /**
          * @brief 保留任何被由 `read` 返回的迭代器所引用的消息所在的共享内存,
-         *        缓存中其余的共享内存实例将被释放 (因此对应区域也将被 umap).
+         *        缓存中其余的共享内存实例将被释放 (因此对应区域也将被 unmap).
          * @return 释放的 `Shared_Memory<false, writable>` 的数量.
          */
         auto gc_() noexcept {
