@@ -202,7 +202,7 @@ class Shared_Memory: public std::span<
         /**
          * @brief 创建 shared memory 并映射, 可供其它进程打开以读写.
          * @param name 这是目标文件名.  POSIX 要求的格式是 `/path-to-shm`.
-         *             建议使用 `generate_shm_UUName()` 自动生成该路径名.
+         *             建议使用 `generate_shm_UUName()` 自动生成该名字.
          * @param size 目标文件的大小, 亦即 shared memory 的长度.  建议使用
          *             `ceil_to_page_size(std::size_t)` 自动生成.
          * @note Shared memory 的长度是固定的, 一旦创建, 无法再改变.
@@ -655,7 +655,7 @@ namespace literals {
 inline namespace utils {
     /**
      * @brief 创建一个 **全局唯一** 的 POSIX shared memory
-     *        路径名, 不知道该给共享内存起什么名字时就用它.
+     *        名字, 不知道该给共享内存起什么名字时就用它.
      * @see Shared_Memory::Shared_Memory(std::string, std::size_t)
      * @note 格式为 `/固定前缀-进程专属的标识符-原子自增的计数字段`.
      * @details 返回的名字的长度为 (31-8=23).  你可以将它转换成包含
@@ -1569,10 +1569,10 @@ template <auto writable=false>
 struct ShM_Reader {
         /**
          * @brief 获取消息的引用.
-         * @param shm_name POSIX shared memory 的路径名.
+         * @param shm_name POSIX shared memory 的名字.
          * @param offset 消息体在 shared memory 中的偏移量.
          * @note 基于共享内存的 IPC 在传递消息时, 靠
-         *       共享内存所对应的目标文件的路径名 和
+         *       共享内存所对应的目标文件的名字 和
          *       消息体在共享内存中的偏移量 决定消息的位置.
          * @note example:
          * ```
