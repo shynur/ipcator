@@ -39,7 +39,7 @@
  * @note 定义 `IPCATOR_LOG` 宏可以打开日志.  调试用.
  * @note 定义 `IPCATOR_NAMESPACE` 宏可以将该文件内的所有 API 放到指定的命名空间.
  */
-
+
 #pragma once
 #include <algorithm>  // ranges::fold_left
 #include <atomic>  // atomic_uint, memory_order_relaxed
@@ -132,7 +132,7 @@
 #include <sys/stat.h>  // fstat, struct stat, fchmod
 #include <unistd.h>  // close, ftruncate, getpagesize
 
-
+
 #ifdef IPCATOR_NAMESPACE
 # define IPCATOR_OPEN_NAMESPACE  namespace IPCATOR_NAMESPACE {
 # define IPCATOR_CLOSE_NAMESPACE }
@@ -140,11 +140,9 @@
 # define IPCATOR_OPEN_NAMESPACE
 # define IPCATOR_CLOSE_NAMESPACE
 #endif
-
-
-
 IPCATOR_OPEN_NAMESPACE
 
+
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
 # ifdef IPCATOR_USED_BY_SEER_RBK
@@ -158,7 +156,7 @@ using namespace std::literals;
 # endif
 #endif
 
-
+
 inline namespace utils {
     /**
      * @brief 将数字向上取整, 成为📄页面大小 (通常是 4096) 的整数倍.
@@ -177,7 +175,7 @@ inline namespace utils {
     }
 }
 
-
+
 /**
  * @brief 对由目标文件映射而来的 POSIX shared memory 的抽象.
  * @note 文档约定:
@@ -564,6 +562,7 @@ static_assert(
     && !std::copy_constructible<Shared_Memory<false, true>>
 );
 
+
 IPCATOR_CLOSE_NAMESPACE
 template <auto creat, auto writable>
 struct std::formatter<
@@ -615,6 +614,7 @@ struct std::formatter<
 };
 IPCATOR_OPEN_NAMESPACE
 
+
 namespace literals {
     /**
      * @brief 创建 `Shared_Memory` 实例的快捷方式.
@@ -651,7 +651,7 @@ namespace literals {
     }
 }
 
-
+
 inline namespace utils {
     /**
      * @brief 创建一个 **全局唯一** 的 POSIX shared memory
@@ -721,7 +721,7 @@ inline namespace utils {
     }
 }
 
-
+
 #ifndef IPCATOR_LOG
 # define IPCATOR_LOG_ALLO_OR_DEALLOC(color)  (void())
 #else
@@ -736,7 +736,7 @@ inline namespace utils {
 )
 #endif
 
-
+
 /**
  * @brief Allocator: 给⬇️游分配 POSIX shared memory.
  *       本质上是一系列 `Shared_Memory<true>` 的集合.
@@ -1168,6 +1168,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 static_assert( std::movable<ShM_Resource<std::set>> );
 static_assert( std::movable<ShM_Resource<std::unordered_set>> );
 
+
 IPCATOR_CLOSE_NAMESPACE
 template <template <typename... T> class set_t>
 struct std::formatter<
@@ -1233,7 +1234,7 @@ struct std::formatter<
 };
 IPCATOR_OPEN_NAMESPACE
 
-
+
 /**
  * @brief Allocator: 单调增长的共享内存 buffer.  它的 allocation 是链式的,
  *        其⬆️游是 `ShM_Resource<std::unordered_set>` 并拥有⬆️游的所有权.
@@ -1361,7 +1362,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
 #endif
 };
 
-
+
 /**
  * @brief Allocator: 共享内存池.  它的 allocation 是链式的, 其
  *        ⬆️游是 `ShM_Resource<std::set>` 并拥有⬆️游的所有权.
@@ -1520,7 +1521,7 @@ class ShM_Pool: public std::conditional_t<
 #endif
 };
 
-
+
 /**
  * @brief 表示共享内存分配器.
  */
@@ -1550,7 +1551,7 @@ static_assert(
     && IPCator<ShM_Pool<false>>
 );
 
-
+
 /**
  * @brief 通用的跨进程消息读取器.
  * @tparam writable 读到消息之后是否允许对其进行修改.
@@ -1660,10 +1661,8 @@ struct ShM_Reader {
         // TODO: LRU GC
 };
 
-IPCATOR_CLOSE_NAMESPACE
 
-
-
+IPCATOR_CLOSE_NAMESPACE
 #if defined IPCATOR_USED_BY_SEER_RBK
 using namespace
 # ifdef IPCATOR_NAMESPACE
