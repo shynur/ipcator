@@ -170,8 +170,7 @@ auto arr = new(&shm[42]) std::array<char, 32>;
 (*arr)[15] = 9;
 // reader.cpp
 auto rd = ShM_Reader{};
-auto& arr_from_other_proc
-    = rd.template read<std::array<char, 32>>("/ipcator.1", 42);
-assert( arr_from_other_proc[15] == 9 );
+auto arr_from_other_proc = rd.template read<std::array<char, 32>>("/ipcator.1", 42);
+assert( (*arr_from_other_proc)[15] == 9 );
 }
 }
