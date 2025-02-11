@@ -146,15 +146,17 @@ IPCATOR_OPEN_NAMESPACE
 
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
-# ifdef IPCATOR_USED_BY_SEER_RBK
-#   pragma clang diagnostic ignored "-Wc++2b-extensions"  // "warning: 'size_t' suffix for literals is a C++2b extension"
-#   pragma clang diagnostic push
-#   pragma clang diagnostic ignored "-Wuser-defined-literals"
+#   ifdef IPCATOR_USED_BY_SEER_RBK
+#       pragma clang diagnostic ignored "-Wc++2b-extensions"
+#       pragma clang diagnostic push
+#       pragma clang diagnostic ignored "-Wuser-defined-literals"
+#   endif
     consteval auto operator "" uz(unsigned long long integer) -> std::size_t {
         return integer;
     }
-#   pragma clang diagnostic pop
-# endif
+#   ifdef IPCATOR_USED_BY_SEER_RBK
+#       pragma clang diagnostic pop
+#   endif
 #endif
 
 
@@ -791,7 +793,14 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
 
             /* As A Comparator */
-            static bool operator()(const auto& a, const auto& b) noexcept {
+#ifdef __cpp_static_call_operator
+            static
+#endif
+            bool operator()(const auto& a, const auto& b)
+#ifndef __cpp_static_call_operator
+            const
+#endif
+            noexcept {
                 const auto pa = get_addr(a), pb = get_addr(b);
 
                 if constexpr (using_ordered_set)
@@ -800,8 +809,14 @@ class ShM_Resource: public std::pmr::memory_resource {
                     return pa == pb;
             }
             /* As A Hasher */
-            static auto operator()(const auto& shm) noexcept
-            -> std::size_t {
+#ifdef __cpp_static_call_operator
+            static
+#endif
+            auto operator()(const auto& shm)
+#ifndef __cpp_static_call_operator
+            const
+#endif
+            noexcept -> std::size_t {
                 const auto addr = get_addr(shm);
                 return std::hash<std::decay_t<decltype(addr)>>{}(addr);
             }
@@ -922,10 +937,10 @@ class ShM_Resource: public std::pmr::memory_resource {
                         this->resources.cbegin(), this->resources.cend(),
                         [area=(const void *)area](const auto& shm) noexcept {
                             if constexpr (using_ordered_set)
-                                return !ShM_As_Addr::operator()(shm, area) == !ShM_As_Addr::operator()(area, shm);
+                                return !ShM_As_Addr{}(shm, area) == !ShM_As_Addr{}(area, shm);
                             else
-                                return ShM_As_Addr::operator()(shm) == ShM_As_Addr::operator()(area)
-                                       && ShM_As_Addr::operator()(shm, area);
+                                return ShM_As_Addr{}(shm) == ShM_As_Addr{}(area)
+                                       && ShM_As_Addr{}(shm, area);
                         }
                     )
                 )
@@ -1622,7 +1637,11 @@ struct ShM_Reader {
         auto gc_() noexcept {
             return std::erase_if(
                 this->cache,
-                [](const auto& pair) static {
+                [](const auto& pair)
+#ifdef __cpp_static_call_operator
+                static
+#endif
+                {
                     return pair.second == 0;
                 }
             );
@@ -1643,8 +1662,8 @@ struct ShM_Reader {
                     std::find_if(
                         this->cache.cbegin(), this->cache.cend(),
                         [&](const auto& pair) {
-                            return ShM_As_Str::operator()(name) == ShM_As_Str::operator()(pair.first);
-                                   && ShM_As_Str::operator()(name, pair.first);
+                            return ShM_As_Str{}(name) == ShM_As_Str{}(pair.first)
+                                   && ShM_As_Str{}(name, pair.first);
                         }
                     )
 #endif
@@ -1678,13 +1697,26 @@ struct ShM_Reader {
             }
 
             /* Hash */
-            static auto operator()(const auto& shm) noexcept
-            -> std::size_t {
+#ifdef __cpp_static_call_operator
+            static
+#endif
+            auto operator()(const auto& shm)
+#ifndef __cpp_static_call_operator
+            const
+#endif
+            noexcept -> std::size_t {
                 const auto name = get_name(shm);
                 return std::hash<std::decay_t<decltype(name)>>{}(name);
             }
             /* KeyEqual */
-            static bool operator()(const auto& a, const auto& b) noexcept {
+#ifdef __cpp_static_call_operator
+            static
+#endif
+            bool operator()(const auto& a, const auto& b)
+#ifndef __cpp_static_call_operator
+            const
+#endif
+            noexcept {
                 return get_name(a) == get_name(b);
             }
         };

@@ -34,13 +34,11 @@ git clone -b master --single-branch --recurse-submodule https://github.com/shynu
 
 - 直接执行 `make print-vars`, 不飘红就行; 否则, 根据提示设置正确的 编译器 和 C++ 标准.  <br />
   例如, 在我的机器上有报错: `g++: error: unrecognized command line option ‘-std=c++26’; did you mean ‘-std=c++2a’?`,
-  说明编译器 (`g++-9`) 太旧导致有些选项无法识别, 而 C++ 标准太新, 可以折中一下, 重新执行
+  说明编译器 (`g++-9`) 太旧导致有些选项无法识别, 而 C++ 标准太新.  重新执行
 
   ```bash
-  CXX=g++-10 ISOCPP=20 make print-vars
+  CXX=g++-10 ISOCPP=2a make print-vars
   ```
-
-  (⚠: `clang++` 在编译时可能会 crash (llvm/llvm-project#113324).  但经过测试, `clang++-19` 是没有问题的.)
 
 ### 依赖项
 
