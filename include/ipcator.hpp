@@ -111,6 +111,7 @@
 #include <thread>  // this_thread::{sleep_for,yield}
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
+#include <unordered_map>
 #include <unordered_set>
 # include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
 # ifndef __cpp_lib_unreachable
@@ -790,7 +791,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
 
             /* As A Comparator */
-            bool operator()(const auto& a, const auto& b) const noexcept {
+            static bool operator()(const auto& a, const auto& b) noexcept {
                 const auto pa = get_addr(a), pb = get_addr(b);
 
                 if constexpr (using_ordered_set)
@@ -799,7 +800,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                     return pa == pb;
             }
             /* As A Hasher */
-            auto operator()(const auto& shm) const noexcept
+            static auto operator()(const auto& shm) noexcept
             -> std::size_t {
                 const auto addr = get_addr(shm);
                 return std::hash<std::decay_t<decltype(addr)>>{}(addr);
@@ -921,10 +922,10 @@ class ShM_Resource: public std::pmr::memory_resource {
                         this->resources.cbegin(), this->resources.cend(),
                         [area=(const void *)area](const auto& shm) noexcept {
                             if constexpr (using_ordered_set)
-                                return !ShM_As_Addr{}(shm, area) == !ShM_As_Addr{}(area, shm);
+                                return !ShM_As_Addr::operator()(shm, area) == !ShM_As_Addr::operator()(area, shm);
                             else
-                                return ShM_As_Addr{}(shm) == ShM_As_Addr{}(area)
-                                       && ShM_As_Addr{}(shm, area);
+                                return ShM_As_Addr::operator()(shm) == ShM_As_Addr::operator()(area)
+                                       && ShM_As_Addr::operator()(shm, area);
                         }
                     )
                 )
@@ -1201,7 +1202,7 @@ struct std::formatter<
             }()
 #endif
         ;
-        if constexpr (decltype(resrc)::using_ordered_set)
+        if constexpr (std::decay_t<decltype(resrc)>::using_ordered_set)
             return std::vformat_to(
                 context.out(),
                 R":({{ "resources": {{ "|size|": {} }}, "constructor()": "ShM_Resource<std::set>" }}):",
@@ -1592,15 +1593,18 @@ struct ShM_Reader {
             const std::string_view shm_name, const std::size_t offset
         ) {
             class Iterator {
-                    std::size_t& cnf_ref;
+                    std::size_t& cnt_ref;
                     const std::conditional_t<writable, T *, const T *> pobj;
                 public:
-                    Iterator(auto& self, decltype(self.cnt_ref) cnt_ref, decltype(self.pobj) pobj)
-                    : cnt_ref{cnt_ref}, pobj{pobj} {
-                        ++cnt_ref;
+                    Iterator(
+                        std::size_t& cnt_ref,
+                        const std::conditional_t<writable, T *, const T *> pobj
+                    ): cnt_ref{cnt_ref}, pobj{pobj} {
+                        ++this->cnt_ref;
                     }
-                    auto *operator->() const { return pobj; }
-                    auto& operator*() const { return *pobj; }
+                    ~Iterator() { --this->cnt_ref; }
+                    auto *operator->() const { return this->pobj; }
+                    auto& operator*() const { return *this->pobj; }
             };
 
             auto& shm = this->select_shm(shm_name);
@@ -1608,6 +1612,20 @@ struct ShM_Reader {
                 this->cache.at(shm),
                 std::conditional_t<writable, T *, const T *>(std::data(shm) + offset)
             };
+        }
+
+        /**
+         * @brief 保留任何被由 `read` 返回的迭代器所引用的消息所在的共享内存,
+         *        缓存中其余的共享内存实例将被释放 (因此对应区域也将被 umap).
+         * @return 释放的 `Shared_Memory<false, writable>` 的数量.
+         */
+        auto gc_() noexcept {
+            return std::erase_if(
+                this->cache,
+                [](const auto& pair) static {
+                    return pair.second == 0;
+                }
+            );
         }
 
         auto select_shm(const std::string_view name) -> const
@@ -1618,29 +1636,29 @@ struct ShM_Reader {
 #endif
         & {
             if (
-                const auto shm =
+                const auto shm_and_cnt =
 #ifdef __cpp_lib_generic_unordered_lookup
                     this->cache.find(name)
 #else
                     std::find_if(
                         this->cache.cbegin(), this->cache.cend(),
-                        [&](const auto& shm) {
-                            return ShM_As_Str{}(name) == ShM_As_Str{}(shm)
-                                   && ShM_As_Str{}(name, shm);
+                        [&](const auto& pair) {
+                            return ShM_As_Str::operator()(name) == ShM_As_Str::operator()(pair.first);
+                                   && ShM_As_Str::operator()(name, pair.first);
                         }
                     )
 #endif
                 ;
-                shm != std::cend(this->cache)
+                shm_and_cnt != std::cend(this->cache)
             )
-                return *shm;
+                return shm_and_cnt->first;
             else {
-                const auto [inserted, ok] = this->cache.emplace(std::string{name});
+                const auto [inserted, ok] = this->cache.emplace(std::string{name}, 0);
                 assert(ok);
 #if __has_cpp_attribute(assume)
                 [[assume(ok)]];
 #endif
-                return *inserted;
+                return inserted->first;
             }
         }
 
@@ -1660,18 +1678,17 @@ struct ShM_Reader {
             }
 
             /* Hash */
-            auto operator()(const auto& shm) const noexcept
+            static auto operator()(const auto& shm) noexcept
             -> std::size_t {
                 const auto name = get_name(shm);
                 return std::hash<std::decay_t<decltype(name)>>{}(name);
             }
             /* KeyEqual */
-            bool operator()(const auto& a, const auto& b) const noexcept {
+            static bool operator()(const auto& a, const auto& b) noexcept {
                 return get_name(a) == get_name(b);
             }
         };
-        std::unordered_set<Shared_Memory<false, writable>, ShM_As_Str, ShM_As_Str> cache;
-        // TODO: LRU GC
+        std::unordered_map<Shared_Memory<false, writable>, std::size_t, ShM_As_Str, ShM_As_Str> cache;
 };
 
 

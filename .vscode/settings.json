@@ -54,6 +54,21 @@
     "thread": "cpp",
     "typeinfo": "cpp",
     "variant": "cpp",
-    "format": "cpp"
+    "format": "cpp",
+    "initializer_list": "cpp",
+    "stdexcept": "cpp",
+    "cwchar": "cpp",
+    "clocale": "cpp",
+    "codecvt": "cpp",
+    "cstring": "cpp",
+    "cwctype": "cpp",
+    "deque": "cpp",
+    "iomanip": "cpp",
+    "numbers": "cpp",
+    "numeric": "cpp",
+    "semaphore": "cpp",
+    "stop_token": "cpp",
+    "streambuf": "cpp",
+    "text_encoding": "cpp"
   }
 }
