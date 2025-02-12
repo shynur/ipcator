@@ -1,17 +1,18 @@
 #include "ipcator.hpp"
 using namespace literals;
 
-int shared_fn(int n) { return n * 2 + 1; }  // 要传递的函数.
+int shared_fn(int n) { return 2 * n + 1; }  // 要传递的函数.
 int main(int ac, const char *av[]) {
 #if true  // 或修改为 false.
     Monotonic_ShM_Buffer
 #else
-    ShM_Pool<bool>
+    ShM_Pool<false>
 #endif
                     shm_allocator;
     const auto size_fn = std::stoul([&] { const auto p = popen(("echo print\\(0x`nm -SC "s + av[0] + " | grep ' shared_fn(int)$' - | awk -F' ' '{print $2}'`\\) | python3").c_str(), "r"); char buf[4]; fgets(buf, sizeof buf, p); return std::string{buf}; }());
     const auto block = (char *)shm_allocator.allocate(size_fn);  // 向 buffer 申请内存块.
-    for (const auto i : std::views::iota(0u, size_fn)) block[i] = ((char *)shared_fn)[i];  // 向内存块写入数据.
+    for (const auto i : std::views::iota(0u, size_fn))
+        block[i] = ((char *)shared_fn)[i];  // 向内存块写入数据.
 
     // 查找 block 所在的 POSIX shared memory:
     const auto& target_shm = shm_allocator.upstream_resource()->find_arena(block);
