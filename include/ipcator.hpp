@@ -1607,19 +1607,23 @@ struct ShM_Reader {
         auto read(
             const std::string_view shm_name, const std::size_t offset
         ) {
-            class Iterator {
+            struct Iterator {
+                    using element_type = std::conditional_t<writable, T, const T>;
+                private:
                     std::size_t& cnt_ref;
-                    const std::conditional_t<writable, T *, const T *> pobj;
+                    element_type *const pobj;
                 public:
-                    Iterator(
-                        std::size_t& cnt_ref,
-                        const std::conditional_t<writable, T *, const T *> pobj
-                    ): cnt_ref{cnt_ref}, pobj{pobj} {
+                    Iterator(std::size_t& cnt_ref, element_type *const pobj)
+                    : cnt_ref{cnt_ref}, pobj{pobj} {
                         ++this->cnt_ref;
                     }
                     ~Iterator() { --this->cnt_ref; }
+
                     auto *operator->() const { return this->pobj; }
                     auto& operator*() const { return *this->pobj; }
+
+                    using difference_type = void;
+                    static auto pointer_to(element_type&) = delete;
             };
 
             auto& shm = this->select_shm(shm_name);

@@ -69,6 +69,12 @@
     "semaphore": "cpp",
     "stop_token": "cpp",
     "streambuf": "cpp",
-    "text_encoding": "cpp"
+    "text_encoding": "cpp",
+    "bitset": "cpp",
+    "complex": "cpp",
+    "cstdarg": "cpp",
+    "list": "cpp",
+    "map": "cpp",
+    "fstream": "cpp"
   }
 }
