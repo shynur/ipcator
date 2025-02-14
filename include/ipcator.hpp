@@ -134,9 +134,11 @@
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
-#pragma clang diagnostic ignored "-Wc++2b-extensions"
-#pragma clang diagnostic ignored "-Wc++23-attribute-extensions"
-#pragma clang diagnostic ignored "-Wc++26-extensions"
+#ifdef __clang__
+# pragma clang diagnostic ignored "-Wc++2b-extensions"
+# pragma clang diagnostic ignored "-Wc++23-attribute-extensions"
+# pragma clang diagnostic ignored "-Wc++26-extensions"
+#endif
 
 
 #ifdef IPCATOR_NAMESPACE
@@ -373,7 +375,7 @@ class Shared_Memory: public std::span<
                 name.length() <= 255
                 && ("/dev/shm" + name).length() <= PATH_MAX
             );
-            const auto fd [[gnu::cleanup(close)]] = [&](const auto do_open) {
+            const auto fd = [&](const auto do_open) {
                 if constexpr (creat)
                     return do_open();
                 else {
@@ -475,9 +477,7 @@ class Shared_Memory: public std::span<
                     assert(addr != MAP_FAILED);
                     return (char *)addr;
                 }();
-#if !__has_cpp_attribute(gnu::cleanup)
                 close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
-#endif
 
                 if constexpr (creat)
                     return area_addr;
@@ -875,7 +875,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #ifdef IPCATOR_OFAST
         [[gnu::assume_aligned(4096)]]
 #endif
-        void *do_allocate [[using gnu: returns_nonnull, alloc_size(1)]] (
+        void *do_allocate [[using gnu: returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
         ) noexcept
 #ifndef IPCATOR_OFAST
@@ -922,7 +922,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate[[gnu::nonnull(1) /* 不用 nonnull_if_nonzero 是因为 size 不可能为 0.  */ ]](
+        void do_deallocate[[gnu::nonnull(2) /* 不用 nonnull_if_nonzero 是因为 size 不可能为 0.  */ ]](
             void *const area,
             const std::size_t size [[maybe_unused]],
             const std::size_t alignment [[maybe_unused]]
@@ -1333,7 +1333,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             );
         }
     protected:
-        void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(1)]] (
+        void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
         )
 #ifdef IPCATOR_OFAST
@@ -1346,7 +1346,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate[[gnu::nonnull(1)]](
+        void do_deallocate[[gnu::nonnull(2)]](
             void *const area, const std::size_t size, const std::size_t alignment
         ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
@@ -1421,7 +1421,7 @@ class ShM_Pool: public std::conditional_t<
             std::pmr::unsynchronized_pool_resource
         >;
     protected:
-        void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(1)]] (
+        void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
         )
 #ifdef IPCATOR_OFAST
@@ -1435,7 +1435,7 @@ class ShM_Pool: public std::conditional_t<
             return area;
         }
 
-        void do_deallocate[[gnu::nonnull(1)]](
+        void do_deallocate[[gnu::nonnull(2)]](
             void *const area, const std::size_t size, const std::size_t alignment
         )
 #ifdef IPCATOR_OFAST
@@ -1632,7 +1632,7 @@ struct ShM_Reader {
                     auto *operator->() const { return this->pobj; }
                     auto& operator*() const { return *this->pobj; }
 
-                    using difference_type = void;
+                    using difference_type [[maybe_unused]] = void;
                     static auto pointer_to(element_type&) = delete;
 #ifdef IPCATOR_USED_BY_SEER_RBK
                     auto& get_cnt_ref() const { return this->cnt_ref; }
