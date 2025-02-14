@@ -1624,12 +1624,15 @@ struct ShM_Reader {
 
                     using difference_type = void;
                     static auto pointer_to(element_type&) = delete;
+#ifdef IPCATOR_USED_BY_SEER_RBK
+                    auto& get_cnt_ref() const { return this->cnt_ref; }
+#endif
             };
 
             auto& shm = this->select_shm(shm_name);
             return Iterator{
                 this->cache.at(shm),
-                std::conditional_t<writable, T *, const T *>(std::data(shm) + offset)
+                (Iterator::element_type *)(std::data(shm) + offset)
             };
         }
 
