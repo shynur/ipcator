@@ -174,8 +174,9 @@ inline namespace utils {
      * std::cout << ceil_to_page_size(1);
      * ```
      */
-    inline auto ceil_to_page_size(const std::size_t min_length) noexcept
-    -> std::size_t {
+    inline auto ceil_to_page_size[[gnu::pure]](
+        const std::size_t min_length
+    ) noexcept -> std::size_t {
         const auto current_num_pages = min_length / getpagesize();
         const bool need_one_more_page = min_length % getpagesize();
         return (current_num_pages + need_one_more_page) * getpagesize();
@@ -260,7 +261,7 @@ class Shared_Memory: public std::span<
                              &
 #endif
                                name
-        ) noexcept(noexcept(Shared_Memory::map_shm(""))) requires(!creat)
+        ) noexcept(noexcept(Shared_Memory::map_shm(""s))) requires(!creat)
         : span{
             [&]
 #if __cplusplus <= 202002L
@@ -372,7 +373,7 @@ class Shared_Memory: public std::span<
                 name.length() <= 255
                 && ("/dev/shm" + name).length() <= PATH_MAX
             );
-            const auto fd = [&](const auto do_open) {
+            const auto fd [[gnu::cleanup(close)]] = [&](const auto do_open) {
                 if constexpr (creat)
                     return do_open();
                 else {
@@ -439,7 +440,7 @@ class Shared_Memory: public std::span<
             ] {
                 assert(size);
 #if __has_cpp_attribute(assume)
-                [[assume(size)]];
+                [[assume(size)]];  // POSIX mmap 要求.
 #endif
                 const auto area_addr = [&] {
 #ifdef IPCATOR_OFAST
@@ -474,7 +475,9 @@ class Shared_Memory: public std::span<
                     assert(addr != MAP_FAILED);
                     return (char *)addr;
                 }();
+#if !__has_cpp_attribute(gnu::cleanup)
                 close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
+#endif
 
                 if constexpr (creat)
                     return area_addr;
@@ -498,7 +501,7 @@ class Shared_Memory: public std::span<
          * @param num_col 列数
          * @param space 每个 byte 之间的填充字符串
          */
-        auto pretty_memory_view(
+        auto pretty_memory_view[[gnu::cold]](
             const std::size_t num_col = 16, const std::string_view space = " "
         ) const {
 #if defined __cpp_lib_ranges_fold  \
@@ -550,7 +553,7 @@ class Shared_Memory: public std::span<
          * std::cout << Shared_Memory{"/ipcator.print", 10} << '\n';
          * ```
          */
-        friend auto operator<<(std::ostream& out, const Shared_Memory& shm)
+        friend auto operator<<[[gnu::cold]](std::ostream& out, const Shared_Memory& shm)
         -> decltype(auto) {
             return out << std::format("{}", shm);
         }
@@ -641,7 +644,7 @@ namespace literals {
      * assert( reader[9] == 9 );
      * ```
      */
-    inline auto operator""_shm(const char *const name, [[maybe_unused]] std::size_t) {
+    inline auto operator""_shm[[gnu::cold]](const char *const name, [[maybe_unused]] std::size_t) {
         struct ShM_Constructor_Proxy {
             const char *const name;
             auto operator[](const std::size_t size) const {
@@ -800,7 +803,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 #ifdef __cpp_static_call_operator
             static
 #endif
-            bool operator()(const auto& a, const auto& b)
+            bool operator()[[gnu::cold]](const auto& a, const auto& b)
 #ifndef __cpp_static_call_operator
             const
 #endif
@@ -869,7 +872,10 @@ class ShM_Resource: public std::pmr::memory_resource {
          */
         void deallocate(void *area, std::size_t size);
 #endif
-        void *do_allocate(
+#ifdef IPCATOR_OFAST
+        [[gnu::assume_aligned(4096)]]
+#endif
+        void *do_allocate [[using gnu: returns_nonnull, alloc_size(1)]] (
             const std::size_t size, const std::size_t alignment
         ) noexcept
 #ifndef IPCATOR_OFAST
@@ -916,7 +922,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate(
+        void do_deallocate[[gnu::nonnull(1) /* 不用 nonnull_if_nonzero 是因为 size 不可能为 0.  */ ]](
             void *const area,
             const std::size_t size [[maybe_unused]],
             const std::size_t alignment [[maybe_unused]]
@@ -958,7 +964,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 && std::size(whatcanisay_shm_out) <= ceil_to_page_size(size)
             );
         }
-        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+        bool do_is_equal[[gnu::cold]](const std::pmr::memory_resource& other) const noexcept override {
             if (const auto that = dynamic_cast<decltype(this)>(&other))
                 return &this->resources == &that->resources;
             else
@@ -1084,7 +1090,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * assert( pshm == &allocator.find_arena(addr) );
          * ```
          */
-        auto get_resources(
+        auto get_resources[[gnu::cold]](
 #ifndef __cpp_explicit_this_parameter
         ) const& -> auto& {
             return this->resources;
@@ -1123,7 +1129,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          *           << b << '\n';
          * ```
          */
-        friend auto operator<<(std::ostream& out, const ShM_Resource& resrc)
+        friend auto operator<<[[gnu::cold]](std::ostream& out, const ShM_Resource& resrc)
         -> decltype(auto) {
             return out << std::format("{}", resrc);
         }
@@ -1152,7 +1158,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * );  // 都在同一片 POSIX shared memory 区域.
          * ```
          */
-        const auto& find_arena(const auto *const obj) const noexcept(false) {
+        const auto& find_arena[[gnu::hot]](const auto *const obj) const noexcept(false) {
             const auto obj_in_shm = [&](const auto& shm) {
                 return std::to_address(std::cbegin(shm)) <= (const char *)obj
                        && (const char *)(std::uintptr_t(obj)+1) <= std::to_address(std::cend(shm));
@@ -1327,7 +1333,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             );
         }
     protected:
-        void *do_allocate(
+        void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(1)]] (
             const std::size_t size, const std::size_t alignment
         )
 #ifdef IPCATOR_OFAST
@@ -1340,7 +1346,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate(
+        void do_deallocate[[gnu::nonnull(1)]](
             void *const area, const std::size_t size, const std::size_t alignment
         ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
@@ -1415,7 +1421,7 @@ class ShM_Pool: public std::conditional_t<
             std::pmr::unsynchronized_pool_resource
         >;
     protected:
-        void *do_allocate(
+        void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(1)]] (
             const std::size_t size, const std::size_t alignment
         )
 #ifdef IPCATOR_OFAST
@@ -1429,7 +1435,7 @@ class ShM_Pool: public std::conditional_t<
             return area;
         }
 
-        void do_deallocate(
+        void do_deallocate[[gnu::nonnull(1)]](
             void *const area, const std::size_t size, const std::size_t alignment
         )
 #ifdef IPCATOR_OFAST
@@ -1608,7 +1614,7 @@ struct ShM_Reader {
          * ```
          */
         template <class T>
-        auto read(
+        auto read[[gnu::hot]](
             const std::string_view shm_name, const std::size_t offset
         ) {
             struct Iterator {
@@ -1645,7 +1651,7 @@ struct ShM_Reader {
          *        缓存中其余的共享内存实例将被释放 (因此对应区域也将被 unmap).
          * @return 释放的 `Shared_Memory<false, writable>` 的数量.
          */
-        auto gc_() noexcept {
+        auto gc_[[gnu::cold]]() noexcept {
             return std::erase_if(
                 this->cache,
                 [](const auto& pair)
@@ -1723,7 +1729,7 @@ struct ShM_Reader {
 #ifdef __cpp_static_call_operator
             static
 #endif
-            bool operator()(const auto& a, const auto& b)
+            bool operator()[[gnu::cold]](const auto& a, const auto& b)
 #ifndef __cpp_static_call_operator
             const
 #endif
