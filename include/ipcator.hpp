@@ -134,6 +134,11 @@
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
+#pragma clang diagnostic ignored "-Wc++2b-extensions"
+#pragma clang diagnostic ignored "-Wc++23-attribute-extensions"
+#pragma clang diagnostic ignored "-Wc++26-extensions"
+
+
 #ifdef IPCATOR_NAMESPACE
 # define IPCATOR_OPEN_NAMESPACE  namespace IPCATOR_NAMESPACE {
 # define IPCATOR_CLOSE_NAMESPACE }
@@ -147,7 +152,6 @@ IPCATOR_OPEN_NAMESPACE
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
 #   ifdef IPCATOR_USED_BY_SEER_RBK
-#       pragma clang diagnostic ignored "-Wc++2b-extensions"
 #       pragma clang diagnostic push
 #       pragma clang diagnostic ignored "-Wuser-defined-literals"
 #   endif
@@ -1632,7 +1636,7 @@ struct ShM_Reader {
             auto& shm = this->select_shm(shm_name);
             return Iterator{
                 this->cache.at(shm),
-                (Iterator::element_type *)(std::data(shm) + offset)
+                (typename Iterator::element_type *)(std::data(shm) + offset)
             };
         }
 
