@@ -1617,7 +1617,7 @@ struct ShM_Reader {
                     : cnt_ref{cnt_ref}, pobj{pobj} {
                         ++this->cnt_ref;
                     }
-                    ~Iterator() { --this->cnt_ref; }
+                    ~Iterator() noexcept { --this->cnt_ref; }
 
                     auto *operator->() const { return this->pobj; }
                     auto& operator*() const { return *this->pobj; }
