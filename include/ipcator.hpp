@@ -131,11 +131,13 @@
 #include <linux/limits.h>  // PATH_MAX
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat, fchmod
-#include <unistd.h>  // close, ftruncate, getpagesize
+#include <unistd.h>  // close, ftruncate, getpagesize, STDIN_FILENO
 
 
 #ifdef __clang__
+# pragma clang diagnostic ignored "-Wc++2a-extensions"
 # pragma clang diagnostic ignored "-Wc++2b-extensions"
+# pragma clang diagnostic ignored "-Wc++2c-extensions"
 # pragma clang diagnostic ignored "-Wc++23-attribute-extensions"
 # pragma clang diagnostic ignored "-Wc++26-extensions"
 #endif
@@ -179,9 +181,9 @@ inline namespace utils {
     inline auto ceil_to_page_size[[gnu::pure]](
         const std::size_t min_length
     ) noexcept -> std::size_t {
-        const auto current_num_pages = min_length / getpagesize();
-        const bool need_one_more_page = min_length % getpagesize();
-        return (current_num_pages + need_one_more_page) * getpagesize();
+        const auto current_num_pages = min_length / ::getpagesize();
+        const bool need_one_more_page = min_length % ::getpagesize();
+        return (current_num_pages + need_one_more_page) * ::getpagesize();
     }
 }
 
@@ -340,11 +342,11 @@ class Shared_Memory: public std::span<
 
             // 🚫 Writer 将要拒绝任何新的连接请求:
             if constexpr (creat)
-                shm_unlink(this->name.c_str());
+                ::shm_unlink(this->name.c_str());
                 // 此后的 ‘shm_open’ 调用都将失败.
                 // 当所有 shm 都被 ‘munmap’ed 后, 共享内存将被 deallocate.
 
-            munmap(
+            ::munmap(
                 const_cast<char *>(std::data(*this)),
                 std::size(*this)
             );
@@ -375,6 +377,7 @@ class Shared_Memory: public std::span<
                 name.length() <= 255
                 && ("/dev/shm" + name).length() <= PATH_MAX
             );
+
             const auto fd = [&](const auto do_open) {
                 if constexpr (creat)
                     return do_open();
@@ -399,7 +402,7 @@ class Shared_Memory: public std::span<
                         };
                 }
             }(std::bind(
-                shm_open,
+                ::shm_open,
                 name.c_str(),
                 (creat ? O_CREAT|O_EXCL : 0) | (writable ? O_RDWR : O_RDONLY),
                 0777
@@ -408,12 +411,12 @@ class Shared_Memory: public std::span<
             [[assume(fd != -1)]];
 #endif
 #ifdef IPCATOR_USED_BY_SEER_RBK
-            fchmod(fd, 0777);
+            ::fchmod(fd, 0777);
 #endif
 
             if constexpr (creat) {
                 // 设置 shm obj 的大小:
-                const auto result_resize = ftruncate(
+                const auto result_resize = ::ftruncate(
                     fd,
                     size...
 #ifdef __cpp_pack_indexing
@@ -435,8 +438,8 @@ class Shared_Memory: public std::span<
                         ;
                     else
                         // 等到 creator resize 完 shm obj:
-                        for (struct stat shm; true; std::this_thread::yield())
-                            if (fstat(fd, &shm); shm.st_size) [[likely]]
+                        for (struct ::stat shm; true; std::this_thread::yield())
+                            if (::fstat(fd, &shm); shm.st_size) [[likely]]
                                 return shm.st_size + 0uz;
                 }()
             ] {
@@ -448,8 +451,8 @@ class Shared_Memory: public std::span<
 #ifdef IPCATOR_OFAST
                     static constinit auto failed_because_of_exec = false;
 #endif
-                    const auto mmapper = [&](bool use_prot_exec) {
-                        return mmap(
+                    const auto mmap_executable = [&](bool use_prot_exec) {
+                        return ::mmap(
                             nullptr, size,
                             PROT_READ | (writable ? PROT_WRITE : 0) | (use_prot_exec ? PROT_EXEC : 0),
                             MAP_SHARED | (!writable ? MAP_NORESERVE : 0),
@@ -457,7 +460,7 @@ class Shared_Memory: public std::span<
                         );
                     };
 
-                    auto addr = mmapper(
+                    auto addr = mmap_executable(
 #ifndef IPCATOR_OFAST
                         true
 #else
@@ -472,12 +475,12 @@ class Shared_Memory: public std::span<
 #ifdef IPCATOR_LOG
                         std::clog << "Failed to map shm as PROT_EXEC.\n",
 #endif
-                        addr = mmapper(false);
+                        addr = mmap_executable(false);
 
                     assert(addr != MAP_FAILED);
                     return (char *)addr;
                 }();
-                close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
+                ::close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
 
                 if constexpr (creat)
                     return area_addr;
@@ -881,8 +884,8 @@ class ShM_Resource: public std::pmr::memory_resource {
 #ifndef IPCATOR_OFAST
                   (false)
 #endif
-          override {
-            if (alignment > getpagesize() + 0u) [[unlikely]] {
+        [[clang::lifetimebound]] override {
+            if (alignment > ::getpagesize() + 0u) [[unlikely]] {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
                     TooLargeAlignment(const std::size_t demanded_alignment)
@@ -890,7 +893,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                         std::format(
                             "请求分配的字节数组要求按 {} 对齐, 超出了页表大小 (即 {}).",
                             demanded_alignment,
-                            getpagesize()
+                            ::getpagesize()
                         )
                     } {}
                     const char *what() const noexcept override {
@@ -923,7 +926,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             return area;
         }
         void do_deallocate[[gnu::nonnull(2) /* 不用 nonnull_if_nonzero 是因为 size 不可能为 0.  */ ]](
-            void *const area,
+            void *const area [[clang::noescape]],
             const std::size_t size [[maybe_unused]],
             const std::size_t alignment [[maybe_unused]]
         )
@@ -935,7 +938,7 @@ class ShM_Resource: public std::pmr::memory_resource {
 
             // 标准要求 allocation 与 deallocation 的 ‘alignment’ 要匹配, 否则是 undefined
             // behavior.  我们没有记录 allocation 的 ‘alignment’ 值是多少, 但肯定不比📄页面大.
-            assert(alignment <= getpagesize() + 0u);
+            assert(alignment <= ::getpagesize() + 0u);
 
             const auto whatcanisay_shm_out = std::move(
                 this->resources
@@ -1347,7 +1350,9 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             return area;
         }
         void do_deallocate[[gnu::nonnull(2)]](
-            void *const area, const std::size_t size, const std::size_t alignment
+            void *const area [[clang::noescape]],
+            const std::size_t size,
+            const std::size_t alignment
         ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
@@ -1436,7 +1441,9 @@ class ShM_Pool: public std::conditional_t<
         }
 
         void do_deallocate[[gnu::nonnull(2)]](
-            void *const area, const std::size_t size, const std::size_t alignment
+            void *const area [[clang::noescape]],
+            const std::size_t size,
+            const std::size_t alignment
         )
 #ifdef IPCATOR_OFAST
           noexcept
