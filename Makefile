@@ -1,9 +1,9 @@
 SHELL = bash
 CXX := $(shell echo $${CXX:-g++}) -std=c++$(shell echo $${ISOCPP:-26})
 
-DEBUG != if (: $${NDEBUG:?}) 2> /dev/null; then :; else echo 1; fi
-LOG != if (: $${LOG:?}) 2> /dev/null; then echo 1; fi
-OFAST != if (: $${OFAST:?}) 2> /dev/null; then echo 1; fi
+DEBUG != if (: $${NDEBUG:?}) 2>/dev/null; then :; else echo 1; fi
+LOG != if (: $${LOG:?}) 2>/dev/null; then echo 1; fi
+OFAST != if (: $${OFAST:?}) 2>/dev/null; then echo 1; fi
 
 CXXDEBUG = -O0 -ggdb -g3  \
            -fvar-tracking -gcolumn-info -femit-class-debug-always  \
@@ -51,18 +51,7 @@ ipc:  bin/ipc-writer-$(BUILD_INFO).exe  bin/ipc-reader-$(BUILD_INFO).exe
 
 
 bin/test-$(BUILD_INFO).exe:  src/test.cpp  include/ipcator.hpp  $(LIBARS) | bin/
-	mkdir -p /tmp/shynur/ipcator/;  \
-	if time  \
-		$(CXX) -fdiagnostics-color=always $(CXXFLAGS) $< -L./lib/archives $(LDFLAGS) -o $@  \
-		2> /tmp/shynur/ipcator/Makefile-stderr.txt; then  \
-		:;  \
-	else  \
-		LASTEXITCODE=$$?;  \
-		cat /tmp/shynur/ipcator/Makefile-stderr.txt  \
-		| sed -e 's/warning:/😩🙏:/g' -e 's/error:/😭👊:/g';  \
-		rm /tmp/shynur/ipcator/Makefile-stderr.txt;  \
-		(exit $$LASTEXITCODE);  \
-	fi
+	time $(CXX) $(CXXFLAGS) $< -L./lib/archives $(LDFLAGS) -o $@
 
 bin/ipc-%-$(BUILD_INFO).exe:  src/ipc-%.cpp  include/ipcator.hpp  $(LIBARS) | bin/
 	time $(CXX) $(CXXFLAGS) $< -L./lib/archives $(LDFLAGS) -o $@
@@ -70,8 +59,8 @@ bin/ipc-%-$(BUILD_INFO).exe:  src/ipc-%.cpp  include/ipcator.hpp  $(LIBARS) | bi
 
 lib/archives/libfmt.a: | lib/fmt-build/  lib/archives/
 	cd lib/fmt-build;  \
-	CXX='$(CXX) -g0 -O3' cmake -D'FMT_TEST=false' ../fmt;  \
-	make -j$$[1+`nproc`]  # 不进行测试, 太浪费时间了.
+	CXX='$(CXX) -g0 -O3 -DNDEBUG -w' cmake -D'FMT_TEST=false'`#不进行测试, 太浪费时间了` ../fmt;  \
+	make -j$$[1+`nproc`]
 	mv lib/fmt-build/libfmt.a lib/archives/
 
 

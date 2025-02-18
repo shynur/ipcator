@@ -127,11 +127,11 @@
 # endif
 #include <variant>  // monostate
 #include <version>
-#include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}
+#include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}, open
 #include <linux/limits.h>  // PATH_MAX
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat, fchmod
-#include <unistd.h>  // close, ftruncate, getpagesize, STDIN_FILENO
+#include <unistd.h>  // close, ftruncate, getpagesize
 
 
 #ifdef __clang__
@@ -168,8 +168,11 @@ using namespace std::literals;
 #endif
 
 
+/* 对 POSIX API 的复刻, 但参数的类型更多样.  */
 namespace POSIX {
-    auto close(const decltype(STDIN_FILENO) *const fd) {
+    // 注意: POSIX API 不使用异常!
+
+    inline auto close(const decltype(::open("", {})) *const fd) noexcept {
 #ifdef IPCATOR_LOG
         std::clog << "调用了 `"s +
 # if defined __GNUC__ || defined __clang__
@@ -177,8 +180,7 @@ namespace POSIX {
 # else
                      __func__
 # endif
-                     + "` "
-                     "(手写的 POSIX close 的重载版本).\n";
+                     + "` (手写的 POSIX close 的重载版本).\n";
 #endif
         return ::close(*fd);
     }
@@ -284,11 +286,7 @@ class Shared_Memory: public std::span<
                                name
         ) noexcept(noexcept(Shared_Memory::map_shm(""s))) requires(!creat)
         : span{
-            [&]
-#if __cplusplus <= 202002L
-               ()
-#endif
-            -> span {
+            [&]() -> span {
                 const auto [addr, length] = Shared_Memory::map_shm(name);
                 return {addr, length};
             }()
@@ -383,7 +381,7 @@ class Shared_Memory: public std::span<
          */
         auto& get_name() const { return this->name; }
 
-#if __cplusplus >= 202302L
+#if __has_cpp_attribute(nodiscard)
         [[nodiscard]]
 #endif
         static auto map_shm(const std::string& name, const std::unsigned_integral auto... size)
@@ -396,8 +394,13 @@ class Shared_Memory: public std::span<
             );
 
             using POSIX::close;
-            [[gnu::cleanup(close)]]
-            const decltype(STDIN_FILENO) fd = [&](const auto do_open) {
+            const
+#if 16 <= __clang_major__ && __clang_major__ <= 20
+                  decltype(::open("", {}))
+#else
+                  auto
+#endif
+                       fd [[gnu::cleanup(close)]] = [&](const auto do_open) {
                 if constexpr (creat)
                     return do_open();
                 else {
@@ -615,11 +618,7 @@ struct std::formatter<
             return p;
     }
     auto format(const auto& shm, auto& context) const {
-        constexpr auto obj_constructor = []
-#if __cplusplus <= 202002L
-            ()
-#endif
-        consteval {
+        constexpr auto obj_constructor = []() consteval {
             if (creat)
                 if (writable)
                     return "Shared_Memory<creat=true,writable=true>";
@@ -792,11 +791,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * @cond
          * 请 Doxygen 忽略该变量, 因为它总是显示初始值 (而我不想这样).
          */
-        static constexpr bool using_ordered_set = []
-#if __cplusplus <= 202002L
-            ()
-#endif
-        consteval {
+        static constexpr bool using_ordered_set = []() consteval {
             if constexpr (requires {
                 requires std::same_as<set_t<int>, std::set<int>>;
             })
@@ -1038,24 +1033,25 @@ class ShM_Resource: public std::pmr::memory_resource {
 #else
             &other_resources=other.resources
 #endif
-            , this
-        ]
-#if __cplusplus <= 202002L
-         ()
+            ,
+#pragma clang diagnostic push
+#if 16 <= __clang_major__ && __clang_major__ <= 20
+# pragma clang diagnostic ignored "-Wunused-lambda-capture"
 #endif
-            mutable {
-                decltype(this->resources) resources;
+            this
+#pragma clang diagnostic pop
+        ]() mutable {
+            decltype(this->resources) resources;
 
-                while (!std::empty(other_resources))
-                    resources.insert(std::move(
-                        other_resources
-                        .extract(std::cbegin(other_resources))
-                        .value()
-                    ));
+            while (!std::empty(other_resources))
+                resources.insert(std::move(
+                    other_resources
+                    .extract(std::cbegin(other_resources))
+                    .value()
+            ));
 
-                return resources;
-            }()
-        } {}
+            return resources;
+        }()} {}
 
         /**
          * @brief 实现交换语义.

@@ -3,8 +3,8 @@
 一个简单的示例, 在 reader 进程中执行 writer 进程里的函数
 (该示例未必能成功执行, 因为可能运行于容器 (参见 docker `--tmpfs` 参数) 等权限受限的环境中):
 
-<https://github.com/shynur/ipcator/blob/80877e5861182402f079f15210fd6115d0150ba1/src/ipc-writer.cpp#L1-L21>
-<https://github.com/shynur/ipcator/blob/80877e5861182402f079f15210fd6115d0150ba1/src/ipc-reader.cpp#L1-L13>
+<https://github.com/shynur/ipcator/blob/b1f4f27de52dbb5789062bd69e6858ca7a6ffbf7/src/ipc-writer.cpp#L1-L21>
+<https://github.com/shynur/ipcator/blob/b1f4f27de52dbb5789062bd69e6858ca7a6ffbf7/src/ipc-reader.cpp#L1-L13>
 
 你可自己手动编译执行; 也可根据 [测试双进程间的通信](#测试双进程间的通信) 的提示,
 将以上两段代码分别填到 [`src`](./src/) 目录下的 `ipc-*.cpp` 文件中,
