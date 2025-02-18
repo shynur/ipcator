@@ -168,6 +168,23 @@ using namespace std::literals;
 #endif
 
 
+namespace POSIX {
+    auto close(const decltype(STDIN_FILENO) *const fd) {
+#ifdef IPCATOR_LOG
+        std::clog << "调用了 `"s +
+# if defined __GNUC__ || defined __clang__
+                     __PRETTY_FUNCTION__
+# else
+                     __func__
+# endif
+                     + "` "
+                     "(手写的 POSIX close 的重载版本).\n";
+#endif
+        return ::close(*fd);
+    }
+}
+
+
 inline namespace utils {
     /**
      * @brief 将数字向上取整, 成为📄页面大小 (通常是 4096) 的整数倍.
@@ -378,7 +395,9 @@ class Shared_Memory: public std::span<
                 && ("/dev/shm" + name).length() <= PATH_MAX
             );
 
-            const auto fd = [&](const auto do_open) {
+            using POSIX::close;
+            [[gnu::cleanup(close)]]
+            const decltype(STDIN_FILENO) fd = [&](const auto do_open) {
                 if constexpr (creat)
                     return do_open();
                 else {
@@ -480,7 +499,12 @@ class Shared_Memory: public std::span<
                     assert(addr != MAP_FAILED);
                     return (char *)addr;
                 }();
+#if !__has_cpp_attribute(gnu::cleanup)
+# ifdef IPCATOR_LOG
+                std::clog << "调用了 POSIX close.\n";
+# endif
                 ::close(fd);  // 映射完立即关闭, 对后续操作🈚影响.
+#endif
 
                 if constexpr (creat)
                     return area_addr;
