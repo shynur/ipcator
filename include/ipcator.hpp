@@ -385,7 +385,7 @@ class Shared_Memory: public std::span<
         [[nodiscard]]
 #endif
         static auto map_shm(const std::string& name, const std::unsigned_integral auto... size)
-            noexcept(!creat)  // 打开时可能会报 “no such file” 的错误.
+            noexcept(false)  // 创建时可能文件已存在; 打开时可能报 “no such file” 错误.
             requires(sizeof...(size) == creat)
         {
             assert(
@@ -401,28 +401,28 @@ class Shared_Memory: public std::span<
                   auto
 #endif
                        fd [[gnu::cleanup(close)]] = [&](const auto do_open) {
-                if constexpr (creat)
-                    return do_open();
-                else {
-                    std::future opening = std::async(
-                        [&] {
-                            while (true)
-                                if (const auto fd = do_open(); fd != -1)
-                                    return fd;
-                                else
-                                    std::this_thread::sleep_for(20ms);
-                        }
-                    );
-                    // 阻塞直至目标共享内存对象存在:
-                    if (opening.wait_for(1s) == std::future_status::ready)
-                        [[likely]] return opening.get();
+                std::future opening = std::async([&] {
+                    while (true)
+                        if (const auto fd = do_open(); fd != -1)
+                            return fd;
+                        else
+                            std::this_thread::sleep_for(20ms);
+                });
+                if (opening.wait_for(1s) == std::future_status::ready)
+                    [[likely]] return opening.get();
+                else
+                    if constexpr (creat)
+                        throw std::filesystem::filesystem_error{
+                            "重名的 共享内存对象 已存在, 等待它被删除... creator 等待超时",
+                            "/dev/shm" + name,
+                            std::make_error_code(std::errc::file_exists)
+                        };
                     else
                         throw std::filesystem::filesystem_error{
                             "共享内存对象 仍未被创建, 导致 accessor 等待超时",
                             "/dev/shm" + name,
                             std::make_error_code(std::errc::no_such_file_or_directory)
                         };
-                }
             }(std::bind(
                 ::shm_open,
                 name.c_str(),
