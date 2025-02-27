@@ -2,7 +2,7 @@
 using namespace literals;
 
 int shared_fn(int n) { return 2 * n + 1; }  // 要传递的函数.
-int main(int ac, const char *av[]) {
+int main(int, const char *const av[]) {
 #if true  // 或修改为 false.
     Monotonic_ShM_Buffer
 #else

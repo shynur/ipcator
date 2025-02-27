@@ -39,6 +39,7 @@
  * @note 定义 `IPCATOR_LOG` 宏可以打开日志.  调试用.
  * @note 定义 `IPCATOR_NAMESPACE` 宏可以将该文件内的所有 API 放到指定的命名空间.
  */
+/* clang-format off */
 
 #pragma once
 #include <algorithm>  // ranges::fold_left
@@ -140,6 +141,7 @@
 # pragma clang diagnostic ignored "-Wc++2c-extensions"
 # pragma clang diagnostic ignored "-Wc++23-attribute-extensions"
 # pragma clang diagnostic ignored "-Wc++26-extensions"
+# pragma clang diagnostic ignored "-Wunknown-attributes"
 #endif
 
 
@@ -438,7 +440,7 @@ class Shared_Memory: public std::span<
 
             if constexpr (creat) {
                 // 设置 shm obj 的大小:
-                const auto result_resize = ::ftruncate(
+                const auto result_resize [[maybe_unused]] = ::ftruncate(
                     fd,
                     size...
 #ifdef __cpp_pack_indexing
@@ -1650,10 +1652,17 @@ struct ShM_Reader {
                     std::size_t& cnt_ref;
                     element_type *const pobj;
                 public:
-                    Iterator(std::size_t& cnt_ref, element_type *const pobj)
-                    : cnt_ref{cnt_ref}, pobj{pobj} {
+                    Iterator(
+                        std::size_t& cnt_ref [[clang::lifetime_capture_by(this)]],
+                        element_type *const pobj
+                    ): cnt_ref{cnt_ref}, pobj{pobj} {
                         ++this->cnt_ref;
                     }
+                    Iterator(const Iterator& other)
+                    : cnt_ref{other.cnt_ref}, pobj{other.pobj} {
+                        ++this->cnt_ref;
+                    }
+                    auto& operator=(Iterator) = delete;  // or ‘-Wno-deprecated-copy-with-user-provided-copy’
                     ~Iterator() noexcept { --this->cnt_ref; }
 
                     auto *operator->() const { return this->pobj; }
