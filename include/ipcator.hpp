@@ -80,6 +80,7 @@
 #include <future>  // async, future_status::ready
 #include <iostream>  // clog
 #include <iterator>  // size, {,c}{begin,end}, data, empty
+#include <memory>  // shared_ptr
 #include <memory_resource>  // pmr::{memory_resource,monotonic_buffer_resource,{,un}synchronized_pool_resource,pool_options}
 #include <new>  // bad_alloc
 #include <ostream>  // ostream
@@ -112,7 +113,6 @@
 #include <thread>  // this_thread::{sleep_for,yield}
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
-#include <unordered_map>
 #include <unordered_set>
 # include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
 # ifndef __cpp_lib_unreachable
@@ -1617,13 +1617,15 @@ static_assert(
  *          并加入缓存.  后续的读取将不需要重复打开
  *          相同的目标文件和徒劳的🎯映射.
  *          `ShM_Reader` 会执行特定的策略, 控制缓存
- *          大小, 以限制自身占用的资源.  若要清空缓存,
- *          应直接调用析构函数.
+ *          大小, 以限制自身占用的资源.  然而, 即使
+ *          缓存被清空, 只要持有 `read` 方法的返回值
+ *          (迭代器) 就能保证仍能访问对应的消息.
  */
 template <auto writable=false>
 struct ShM_Reader {
         /**
-         * @brief 获取消息的引用.
+         * @brief 以 迭代器/智能指针 的形式获取消息的引用,
+         *        在迭代器析构之前, **保证** 可以访问消息.
          * @param shm_name POSIX shared memory 的名字.
          * @param offset 消息体在 shared memory 中的偏移量.
          * @note 基于共享内存的 IPC 在传递消息时, 靠
@@ -1645,108 +1647,101 @@ struct ShM_Reader {
         template <class T>
         auto read[[gnu::hot]](
             const std::string_view shm_name, const std::size_t offset
-        ) [[clang::lifetimebound]] {
-            struct Iterator {
-                    using element_type = std::conditional_t<writable, T, const T>;
-                private:
-                    std::size_t& cnt_ref;
-                    element_type *const pobj;
+        ) {
+            class Iterator {
+                    std::shared_ptr<const Shared_Memory<false, writable>> shm;
+                    std::size_t offset;
                 public:
                     Iterator(
-                        std::size_t& cnt_ref [[clang::lifetime_capture_by(this)]],
-                        element_type *const pobj
-                    ): cnt_ref{cnt_ref}, pobj{pobj} {
-                        ++this->cnt_ref;
-                    }
-                    Iterator(const Iterator& other)
-                    : cnt_ref{other.cnt_ref}, pobj{other.pobj} {
-                        ++this->cnt_ref;
-                    }
-                    auto& operator=(Iterator) = delete;  // or ‘-Wno-deprecated-copy-with-user-provided-copy’
-                    ~Iterator() noexcept { --this->cnt_ref; }
+                        decltype(Iterator::shm) shm,
+                        const decltype(Iterator::offset) offset
+                    ): shm{std::move(shm)}, offset{offset} {}
+                    Iterator(const Iterator&) = default;
+                    Iterator& operator=(const Iterator&) = default;
 
-                    auto *operator->() const { return this->pobj; }
-                    auto& operator*() const { return *this->pobj; }
-
-                    using difference_type [[maybe_unused]] = void;
+                    using element_type = std::conditional_t<writable, T, const T>;
                     static auto pointer_to(element_type&) = delete;
+
+                    auto *operator->() const {
+                        return (element_type *)(this->shm->data() + this->offset);
+                    }
+                    auto& operator*() const { return *this->operator->(); }
 #ifdef IPCATOR_USED_BY_SEER_RBK
-                    auto& get_cnt_ref() const { return this->cnt_ref; }
+                    auto get_cnt_ref() const { return this->shm.use_count(); }
 #endif
             };
 
-            auto& shm = this->select_shm(shm_name);
-            return Iterator{
-                this->cache.at(shm),
-                (typename Iterator::element_type *)(std::data(shm) + offset)
-            };
+            return Iterator{this->select_shm(shm_name), offset};
         }
 
         /**
-         * @brief 保留任何被由 `read` 返回的迭代器所引用的消息所在的共享内存,
-         *        缓存中其余的共享内存实例将被释放 (因此对应区域也将被 unmap).
+         * @brief 保留任何被由 `read` 返回的迭代器所引用的消息
+         *        所在的共享内存, 缓存中其余的共享内存实例将被释放.
          * @return 释放的 `Shared_Memory<false, writable>` 的数量.
          */
         auto gc_[[gnu::cold]]() noexcept {
             return std::erase_if(
                 this->cache,
-                [](const auto& pair)
+                [](const auto pshm)
 #ifdef __cpp_static_call_operator
                 static
 #endif
                 {
-                    return pair.second == 0;
+                    return
+#if __cplusplus <= 201703L
+                        pshm->unique()
+#else
+                        pshm->use_count() == 1
+#endif
+                    ;
                 }
             );
         }
 
-        auto select_shm(const std::string_view name) -> const
-#if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 20)  // ipcator#3
-            Shared_Memory<false, writable>
-#else
-            auto
-#endif
-        & {
+        auto select_shm(const std::string_view name) {
             if (
-                const auto shm_and_cnt =
+                const auto pshm =
 #ifdef __cpp_lib_generic_unordered_lookup
                     this->cache.find(name)
 #else
                     std::find_if(
                         this->cache.cbegin(), this->cache.cend(),
-                        [&](const auto& pair) {
-                            return ShM_As_Str{}(name) == ShM_As_Str{}(pair.first)
-                                   && ShM_As_Str{}(name, pair.first);
+                        [&](const auto& shm) {
+                            return ShM_As_Str{}(name) == ShM_As_Str{}(shm)
+                                   && ShM_As_Str{}(name, shm);
                         }
                     )
 #endif
                 ;
-                shm_and_cnt != std::cend(this->cache)
+                pshm != std::cend(this->cache)
             )
-                return shm_and_cnt->first;
+                return *pshm;
             else {
-                const auto [inserted, ok] = this->cache.emplace(std::string{name}, 0);
+                const auto [inserted, ok] = this->cache.emplace(
+                    std::make_shared<Shared_Memory<false, writable>>(std::string{name})
+                );
                 assert(ok);
 #if __has_cpp_attribute(assume)
                 [[assume(ok)]];
 #endif
-                return inserted->first;
+                return *inserted;
             }
         }
-
     private:
         struct ShM_As_Str {
             using is_transparent = int;
 
             static auto get_name(const auto& shm_or_name)
             -> std::string_view {
-                if constexpr (std::is_same_v<
-                    std::decay_t<decltype(shm_or_name)>,
-                    std::string_view
-                >)
+                if constexpr (
+                    std::is_same_v<
+                        std::decay_t<decltype(shm_or_name)>,
+                        std::string_view
+                    >
+                )
                     return shm_or_name;
                 else
-                    return shm_or_name.get_name();
+                    return shm_or_name->get_name();
             }
 
             /* Hash */
@@ -1773,7 +1768,10 @@ struct ShM_Reader {
                 return get_name(a) == get_name(b);
             }
         };
-        std::unordered_map<Shared_Memory<false, writable>, std::size_t, ShM_As_Str, ShM_As_Str> cache;
+        std::unordered_set<
+            std::shared_ptr<Shared_Memory<false, writable>>,
+            ShM_As_Str, ShM_As_Str
+        > cache;
 };
 
 

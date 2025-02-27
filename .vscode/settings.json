@@ -3,5 +3,7 @@
   "files.insertFinalNewline": true,
   "files.trimFinalNewlines": true,
   "editor.tabSize": 4,
-  "editor.detectIndentation": false
+  "editor.detectIndentation": false,
+  "files.eol": "\n",
+  "files.encoding": "utf8"
 }
