@@ -1643,7 +1643,7 @@ struct ShM_Reader {
         template <class T>
         auto read[[gnu::hot]](
             const std::string_view shm_name, const std::size_t offset
-        ) {
+        ) [[clang::lifetimebound]] {
             struct Iterator {
                     using element_type = std::conditional_t<writable, T, const T>;
                 private:
