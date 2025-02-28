@@ -3,12 +3,7 @@ using namespace literals;
 
 int shared_fn(int n) { return 2 * n + 1; }  // 要传递的函数.
 int main(int, const char *const av[]) {
-#if true  // 或修改为 false.
-    Monotonic_ShM_Buffer
-#else
-    ShM_Pool<false>
-#endif
-                    shm_allocator;
+    auto shm_allocator = Monotonic_ShM_Buffer/* 或 ShM_Pool<false> 或 ShM_Pool<true> */{};
     const auto size_fn = std::stoul([&] { const auto p = popen(("echo print\\(0x`nm -SC "s + av[0] + " | grep ' shared_fn(int)$' - | awk -F' ' '{print $2}'`\\) | python3").c_str(), "r"); char buf[4]; fgets(buf, sizeof buf, p); return std::string{buf}; }());
     const auto block = (char *)shm_allocator.allocate(size_fn);  // 向 buffer 申请内存块.
     for (const auto i : std::views::iota(0u, size_fn))

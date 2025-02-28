@@ -1667,7 +1667,7 @@ struct ShM_Reader {
                     }
                     auto& operator*() const { return *this->operator->(); }
 #ifdef IPCATOR_USED_BY_SEER_RBK
-                    auto get_cnt_ref() const { return this->shm.use_count(); }
+                    auto cnt_ref_shm() const { return this->shm.use_count(); }
 #endif
             };
 
@@ -1682,16 +1682,16 @@ struct ShM_Reader {
         auto gc_[[gnu::cold]]() noexcept {
             return std::erase_if(
                 this->cache,
-                [](const auto pshm)
+                [](const auto& shm)
 #ifdef __cpp_static_call_operator
                 static
 #endif
                 {
                     return
 #if __cplusplus <= 201703L
-                        pshm->unique()
+                        shm.unique()
 #else
-                        pshm->use_count() == 1
+                        shm.use_count() == 1
 #endif
                     ;
                 }
