@@ -202,7 +202,7 @@ inline namespace utils {
      * std::cout << ceil_to_page_size(1);
      * ```
      */
-    inline auto ceil_to_page_size[[gnu::pure]](
+    inline auto ceil_to_page_size [[gnu::const]] (
         const std::size_t min_length
     ) noexcept -> std::size_t {
         const auto current_num_pages = min_length / ::getpagesize();
@@ -466,8 +466,8 @@ class Shared_Memory: public std::span<
                     else
                         // 等到 creator resize 完 shm obj:
                         for (struct ::stat shm; true; std::this_thread::yield())
-                            if (::fstat(fd, &shm); shm.st_size) [[likely]]
-                                return shm.st_size + 0uz;
+                            if (::fstat(fd, &shm); shm.st_size)
+                                [[likely]] return shm.st_size + 0uz;
                 }()
             ] {
                 assert(size);
@@ -496,7 +496,7 @@ class Shared_Memory: public std::span<
                     );
                     if (addr == MAP_FAILED && errno == EPERM)
 #ifdef IPCATOR_OFAST
-                        [[unlikely]]  // 只会设置这么一次:
+                        [[unlikely]]  // 因为只会设置这么一次:
                         failed_because_of_exec = true,
 #endif
 #ifdef IPCATOR_LOG
@@ -536,7 +536,7 @@ class Shared_Memory: public std::span<
          * @param num_col 列数
          * @param space 每个 byte 之间的填充字符串
          */
-        auto pretty_memory_view[[gnu::cold]](
+        auto pretty_memory_view [[gnu::cold]] (
             const std::size_t num_col = 16, const std::string_view space = " "
         ) const {
 #if defined __cpp_lib_ranges_fold  \
@@ -949,7 +949,8 @@ class ShM_Resource: public std::pmr::memory_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate[[gnu::nonnull(2) /* 不用 nonnull_if_nonzero 是因为 size 不可能为 0.  */ ]](
+        [[gnu::nonnull(2)]]  // 不用 `nonnull_if_nonzero` 是因为 size 不可能为 0.
+        void do_deallocate(
             void *const area [[clang::noescape]],
             const std::size_t size [[maybe_unused]],
             const std::size_t alignment [[maybe_unused]]
@@ -991,7 +992,9 @@ class ShM_Resource: public std::pmr::memory_resource {
                 && std::size(whatcanisay_shm_out) <= ceil_to_page_size(size)
             );
         }
-        bool do_is_equal[[gnu::cold]](const std::pmr::memory_resource& other) const noexcept override {
+        bool do_is_equal [[gnu::cold]] (
+            const std::pmr::memory_resource& other
+        ) const noexcept override {
             if (const auto that = dynamic_cast<decltype(this)>(&other))
                 return &this->resources == &that->resources;
             else
@@ -1118,7 +1121,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * assert( pshm == &allocator.find_arena(addr) );
          * ```
          */
-        auto get_resources[[gnu::cold]](
+        auto get_resources [[gnu::cold]] (
 #ifndef __cpp_explicit_this_parameter
         ) const& -> auto& {
             return this->resources;
@@ -1186,7 +1189,7 @@ class ShM_Resource: public std::pmr::memory_resource {
          * );  // 都在同一片 POSIX shared memory 区域.
          * ```
          */
-        const auto& find_arena[[gnu::hot]](const auto *const obj) const noexcept(false) {
+        const auto& find_arena [[gnu::hot]] (const auto *const obj) const noexcept(false) {
             const auto obj_in_shm = [&](const auto& shm) {
                 return std::to_address(std::cbegin(shm)) <= (const char *)obj
                        && (const char *)(std::uintptr_t(obj)+1) <= std::to_address(std::cend(shm));
@@ -1374,7 +1377,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             IPCATOR_LOG_ALLO_OR_DEALLOC("green");
             return area;
         }
-        void do_deallocate[[gnu::nonnull(2)]](
+        void do_deallocate [[gnu::nonnull(2)]] (
             void *const area [[clang::noescape]],
             const std::size_t size,
             const std::size_t alignment
@@ -1463,7 +1466,7 @@ class ShM_Pool: public std::conditional_t<
             return area;
         }
 
-        void do_deallocate[[gnu::nonnull(2)]](
+        void do_deallocate [[gnu::nonnull(2)]] (
             void *const area [[clang::noescape]],
             const std::size_t size,
             const std::size_t alignment
@@ -1646,7 +1649,7 @@ struct ShM_Reader {
          * ```
          */
         template <class T>
-        auto read[[gnu::hot]](
+        auto read [[gnu::hot]] (
             const std::string_view shm_name, const std::size_t offset
         ) {
             class Iterator {
@@ -1680,7 +1683,7 @@ struct ShM_Reader {
          *        所在的共享内存, 缓存中其余的共享内存实例将被释放.
          * @return 释放的 `Shared_Memory<false, writable>` 的数量.
          */
-        auto gc_[[gnu::cold]]() noexcept {
+        auto gc_ [[gnu::cold]] () noexcept {
             return std::erase_if(
                 this->cache,
                 [](const auto& shm)
