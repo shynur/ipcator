@@ -23,7 +23,7 @@ CXXDIAGNO = -fdiagnostics-path-format=inline-events  \
 CXXFLAGS := -Iinclude  \
             -Wpedantic -Wall -W  \
             $(if $(DEBUG), $(CXXDIAGNO))  \
-            $(if $(DEBUG), $(CXXDEBUG), -g0 -O3 -D'NDEBUG')  \
+            $(if $(DEBUG), $(CXXDEBUG), -g0 -O0 -D'NDEBUG')  \
             $(if $(LOG), -D'IPCATOR_LOG')  \
             $(if $(OFAST), -D'IPCATOR_OFAST')
 
@@ -59,7 +59,7 @@ bin/ipc-%-$(BUILD_INFO).exe:  src/ipc-%.cpp  include/ipcator.hpp  $(LIBARS) | bi
 
 lib/archives/libfmt.a: | lib/fmt-build/  lib/archives/
 	cd lib/fmt-build;  \
-	CXX='$(CXX) -g0 -O3 -DNDEBUG -w' cmake -D'FMT_TEST=false'`#不进行测试, 太浪费时间了` ../fmt;  \
+	CXX='$(CXX) -g0 -O0 -w' cmake -D'FMT_TEST=false'`#不进行测试, 太浪费时间了` ../fmt;  \
 	make -j$$[1+`nproc`]
 	mv lib/fmt-build/libfmt.a lib/archives/
 

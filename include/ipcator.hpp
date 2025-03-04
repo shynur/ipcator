@@ -177,7 +177,7 @@ namespace POSIX {
     inline auto close(const decltype(::open("", {})) *const fd) noexcept {
 #ifdef IPCATOR_LOG
         std::clog << "调用了 `"s +
-# if defined __GNUC__ || defined __clang__
+# if defined __GNUG__ || defined __clang__
                      __PRETTY_FUNCTION__
 # else
                      __func__
@@ -397,7 +397,7 @@ class Shared_Memory: public std::span<
 
             using POSIX::close;
             const
-#if 16 <= __clang_major__ && __clang_major__ <= 20
+#if 16 <= __clang_major__ && __clang_major__ <= 21  // <https://github.com/llvm/llvm-project/issues/129631>
                   decltype(::open("", {}))
 #else
                   auto
@@ -1008,7 +1008,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 this->last_inserted = std::move(other.last_inserted);
         }
 
-#if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 20)  // ipcator#3
+#if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 21)  // ipcator#3
         friend class ShM_Resource<std::set>;
 #endif
         /**
@@ -1030,14 +1030,14 @@ class ShM_Resource: public std::pmr::memory_resource {
          */
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
         : resources{[
-#if __GNUC__ != 15 && (__clang_major__ < 16 || 20 < __clang_major__)  // ipcator#3
+#if __GNUC__ != 15 && (__clang_major__ < 16 || 21 < __clang_major__)  // ipcator#3
             other_resources=std::move(other).get_resources()
 #else
             &other_resources=other.resources
 #endif
             ,
 #pragma clang diagnostic push
-#if 16 <= __clang_major__ && __clang_major__ <= 20
+#if 16 <= __clang_major__ && __clang_major__ <= 21  // TODO
 # pragma clang diagnostic ignored "-Wunused-lambda-capture"
 #endif
             this

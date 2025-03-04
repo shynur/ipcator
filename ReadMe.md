@@ -3,8 +3,8 @@
 一个简单的示例, 在 reader 进程中执行 writer 进程里的函数
 (该示例未必能成功执行, 因为可能运行于容器 (参见 docker `--tmpfs` 参数) 等权限受限的环境中):
 
-<https://github.com/shynur/ipcator/blob/e949c1d534304fbbac9ba286a6ebbfee8058c539/src/ipc-writer.cpp#L1-L23>
-<https://github.com/shynur/ipcator/blob/e949c1d534304fbbac9ba286a6ebbfee8058c539/src/ipc-reader.cpp#L1-L13>
+<https://github.com/shynur/ipcator/blob/57884946d70a59dd798fa79a87d7f8a2f8ab74a3/src/ipc-writer.cpp#L1-L23>
+<https://github.com/shynur/ipcator/blob/57884946d70a59dd798fa79a87d7f8a2f8ab74a3/src/ipc-reader.cpp#L1-L13>
 
 你可自己手动编译执行; 也可根据 [测试双进程间的通信](#测试双进程间的通信) 的提示,
 将以上两段代码分别填到 [`src`](./src/) 目录下的 `ipc-*.cpp` 文件中,
@@ -30,7 +30,7 @@ git clone -b master --single-branch --recurse-submodule https://github.com/shynu
 
 - Doxygen, Graphviz.
 
-- `g++-10` (上至 `g++-15`), 或 `clang++-16` (上至 `clang++-20`).
+- `g++-10` (上至 `g++-15`), 或 `clang++-16` (上至 `clang++-21`).
 
 - 直接执行 `make print-vars`, 不飘红就行; 否则, 根据提示设置正确的 编译器 和 C++ 标准.  <br />
   例如, 在我的机器上有报错: `g++: error: unrecognized command line option ‘-std=c++26’; did you mean ‘-std=c++2a’?`,
