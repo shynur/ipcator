@@ -30,7 +30,7 @@ git clone -b master --single-branch --recurse-submodule https://github.com/shynu
 
 - Doxygen, Graphviz.
 
-- `g++-10` (上至 `g++-15`), 或 `clang++-16` (上至 `clang++-21`).
+- `g++-10` (上至 `g++-15`), 或 `clang++-16` (上至 `clang++-21`) [^clang].
 
 - 直接执行 `make print-vars`, 不飘红就行; 否则, 根据提示设置正确的 编译器 和 C++ 标准.  <br />
   例如, 在我的机器上有报错: `g++: error: unrecognized command line option ‘-std=c++26’; did you mean ‘-std=c++2a’?`,
@@ -111,3 +111,7 @@ make test ipc
 
 降级 [`$ISOCPP`](###### "-std=c++$ISOCPP") 编译时, **无法实现所有语义** (例如封装性与 *const* 方法的重载).  <br />
 特别是, 形如 异质查找 ([P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)) 等新的 STL 算法可能会被手工编写的代码代替, 严重降低性能.
+
+___
+
+[^clang]: 指开源版 Clang, 而不是 Apple Clang.

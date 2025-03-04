@@ -135,6 +135,9 @@
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
+#if 12 <= __GNUC__
+# pragma GCC diagnostic ignored_attributes "clang::"
+#endif
 #ifdef __clang__
 # pragma clang diagnostic ignored "-Wc++2a-extensions"
 # pragma clang diagnostic ignored "-Wc++2b-extensions"
@@ -1378,11 +1381,9 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
         ) noexcept override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
-#ifndef IPCATOR_OFAST
             // 虚晃一枪; actually no-op.
             // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
             this->monotonic_buffer_resource::do_deallocate(area, size, alignment);
-#endif
         }
 #ifdef IPCATOR_IS_BEING_DOXYGENING  // stupid doxygen
         /**
