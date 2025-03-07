@@ -42,7 +42,11 @@
 /* clang-format off */
 
 #pragma once
+#include <version>
 #include <algorithm>  // ranges::fold_left
+# if __has_include(<experimental/algorithm>)
+#   include <experimental/algorithm>  // experimental::sample
+# endif
 #include <atomic>  // atomic_uint, memory_order_relaxed
 #include <cassert>
 #include <cerrno>  // EPERM, errno
@@ -79,12 +83,11 @@
 #include <functional>  // bind{_back,}, bit_or, plus
 #include <future>  // async, future_status::ready
 #include <iostream>  // clog
-#include <iterator>  // size, {,c}{begin,end}, data, empty
+#include <iterator>  // size, {,c}{begin,end}, data, empty, back_inserter
 #include <memory>  // shared_ptr
 #include <memory_resource>  // pmr::{memory_resource,monotonic_buffer_resource,{,un}synchronized_pool_resource,pool_options}
 #include <new>  // bad_alloc
 #include <ostream>  // ostream
-#include <random>  // mt19937, random_device, uniform_int_distribution
 #include <ranges>  // ranges::find_if, views::{chunk,transform,join_with,iota}
 #include <set>
 # if __has_include(<source_location>)
@@ -127,7 +130,6 @@
     }
 # endif
 #include <variant>  // monostate
-#include <version>
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}, open
 #include <linux/limits.h>  // PATH_MAX
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
@@ -135,10 +137,13 @@
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
-#if 12 <= __GNUC__
-# pragma GCC diagnostic ignored_attributes "clang::"
-#endif
-#ifdef __clang__
+#ifdef __GNUG__
+# pragma GCC diagnostic ignored "-Wc++23-extensions"
+# pragma GCC diagnostic ignored "-Wc++26-extensions"
+# if 12 <= __GNUC__
+#   pragma GCC diagnostic ignored_attributes "clang::"
+# endif
+#elif defined __clang__
 # pragma clang diagnostic ignored "-Wc++2a-extensions"
 # pragma clang diagnostic ignored "-Wc++2b-extensions"
 # pragma clang diagnostic ignored "-Wc++2c-extensions"
@@ -730,30 +735,15 @@ inline namespace utils {
         // 由于 (取名 + 构造 shm) 不是原子的, 可能在构造 shm obj 时
         // 和已有的 shm 的名字重合, 或者同时多个进程同时创建了同名 shm.
         // 所以生成的名字必须足够长 (取决于 `infix`), 📉降低碰撞率.
-        static const auto infix =
-#ifdef __cpp_lib_ranges_fold
-            std::ranges::fold_left(
-                std::views::iota(("/"s + prefix + '.' + '.' + suffix).length(), len_name)
-                | std::views::transform([
-                    available_chars,
-                    gen = std::mt19937{std::random_device{}()},
-                    distri = std::uniform_int_distribution<>{0, available_chars.length()-1}
-                ](...) mutable {
-                    return available_chars[distri(gen)];
-                }),
-                ""s, std::plus<>{}
-            )
-#else
-            [&] {
-                auto gen = std::mt19937{std::random_device{}()};
-                auto distri = std::uniform_int_distribution<>{0, available_chars.length()-1};
-                std::string infix;
-                for (auto current_len = ("/"s + prefix + '.' + '.' + suffix).length(); current_len++ != len_name; )
-                    infix += available_chars[distri(gen)];
-                return infix;
-            }()
-#endif
-        ;
+        static const auto infix = [&] {
+            std::string infix;
+            std::experimental::sample(
+                std::cbegin(available_chars), std::cend(available_chars),
+                std::back_inserter(infix),
+                len_name - ("/"s + prefix + '.' + '.' + suffix).length()
+            );
+            return infix;
+        }();
         assert(infix.length() >= 7);
 
         auto&& full_name = "/"s + prefix + '.' + infix + '.' + suffix;
