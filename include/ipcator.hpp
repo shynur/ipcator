@@ -117,7 +117,7 @@
 #include <tuple>  // ignore
 #include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
 #include <unordered_set>
-# include <utility>  // as_const, move, swap, unreachable, hash, exchange, declval
+# include <utility>  // as_const, move, swap, unreachable, hash, exchange
 # ifndef __cpp_lib_unreachable
     namespace std {
         [[noreturn]] inline void unreachable() {
@@ -1078,13 +1078,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             swap(*this, other);
             return *this;
         }
-        ~ShM_Resource() noexcept(noexcept(std::declval<Shared_Memory<false>>().~
-#if defined __GNUG__ && !defined __clang__  // 逆天 Clang 为什么要定义 `__GNU__`.
-            auto
-#else
-            Shared_Memory<false>
-#endif
-            ())) {
+        ~ShM_Resource() override {
 #ifdef IPCATOR_LOG  // 显式删除以触发日志输出.
                 while (!std::empty(this->resources)) {
                     auto& area = *std::cbegin(this->resources);
@@ -1322,15 +1316,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             [[assume(initial_size)]];
 #endif
         }
-        ~Monotonic_ShM_Buffer()
-            noexcept(noexcept(std::declval<ShM_Resource<std::unordered_set>>().~
-#if defined __GNUG__ && !defined __clang__  // 逆天 Clang 为什么要定义 `__GNU__`.
-                auto
-#else
-                ShM_Resource<std::unordered_set>
-#endif
-            ()))
-        {
+        ~Monotonic_ShM_Buffer() override {
             this->release();
             delete this->monotonic_buffer_resource::upstream_resource();
         }
@@ -1483,15 +1469,7 @@ class ShM_Pool: public std::conditional_t<
             },
             new ShM_Resource<std::set>,
         } {}
-        ~ShM_Pool()
-            noexcept(noexcept(std::declval<ShM_Resource<std::set>>().~
-#if defined __GNUG__ && !defined __clang__  // 逆天 Clang 为什么要定义 `__GNU__`.
-                auto
-#else
-                ShM_Resource<std::set>
-#endif
-            ()))
-        {
+        ~ShM_Pool() override {
             this->release();
             delete this->midstream_pool_t::upstream_resource();
         }
