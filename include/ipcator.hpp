@@ -51,6 +51,7 @@
 #include <cassert>
 #include <cerrno>  // EPERM, errno
 #include <chrono>
+#include <climits>  // NAME_MAX
 #include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
 #include <cstddef>  // size_t
 # if __has_include(<format>)
@@ -131,7 +132,6 @@
 # endif
 #include <variant>  // monostate
 #include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}, open
-#include <linux/limits.h>  // PATH_MAX
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat, fchmod
 #include <unistd.h>  // close, ftruncate, getpagesize
@@ -399,8 +399,8 @@ class Shared_Memory: public std::span<
             requires(sizeof...(size) == creat)
         {
             assert(
-                name.length() <= 255
-                && ("/dev/shm" + name).length() <= PATH_MAX
+                name.length() <= NAME_MAX
+                // 实际上 POSIX 没有规定 name 的长度上限, 但我认为需要一个保守值.
             );
 
             using POSIX::close;
@@ -421,18 +421,25 @@ class Shared_Memory: public std::span<
                 if (opening.wait_for(1s) == std::future_status::ready)
                     [[likely]] return opening.get();
                 else
-                    if constexpr (creat)
-                        throw std::filesystem::filesystem_error{
-                            "重名的 共享内存对象 已存在, 等待它被删除... creator 等待超时",
-                            "/dev/shm" + name,
-                            std::make_error_code(std::errc::file_exists)
-                        };
-                    else
-                        throw std::filesystem::filesystem_error{
-                            "共享内存对象 仍未被创建, 导致 accessor 等待超时",
-                            "/dev/shm" + name,
-                            std::make_error_code(std::errc::no_such_file_or_directory)
-                        };
+                    throw std::filesystem::filesystem_error{
+                        // 不要加句号:
+                        creat ? "重名的 共享内存对象 已存在, 等待它被删除... creator 等待超时"
+                              : "共享内存对象 仍未被创建, 导致 accessor 等待超时",
+                        std::format(
+#ifdef __linux__
+                            "/dev/shm/"
+#elif defined __FreeBSD__ || defined __APPLE__
+                            "/var/run/shm/"
+#elif defined __NetBSD__
+                            "/var/shm/"
+#endif
+                            "{}", name
+                        ),
+                        std::make_error_code(
+                            creat ? std::errc::file_exists
+                                  : std::errc::no_such_file_or_directory
+                        )
+                    };
             }(std::bind(
                 ::shm_open,
                 name.c_str(),
@@ -740,7 +747,7 @@ inline namespace utils {
             std::experimental::sample(
                 std::cbegin(available_chars), std::cend(available_chars),
                 std::back_inserter(infix),
-                len_name - ("/"s + prefix + '.' + '.' + suffix).length()
+                len_name - ("/"s + prefix + '.' + "" + '.' + suffix).length()
             );
             return infix;
         }();
