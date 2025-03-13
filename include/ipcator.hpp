@@ -1010,54 +1010,6 @@ class ShM_Resource: public std::pmr::memory_resource {
             if constexpr (!using_ordered_set)
                 this->last_inserted = std::move(other.last_inserted);
         }
-
-#if __GNUC__ == 15 || (16 <= __clang_major__ && __clang_major__ <= 21)  // ipcator#3
-        friend class ShM_Resource<std::set>;
-#endif
-        /**
-         * @brief 同上.
-         * @details 允许 `ShM_Resource<std::set>` 从
-         *          `ShM_Resource<std::unordered_set>`
-         *          移动构造.
-         * @note example:
-         * ```
-         * ShM_Resource<std::unordered_set> a;
-         * auto _ = a.allocate(1);
-         * assert( std::size(a.get_resources()) == 1 );
-         * ShM_Resource<std::set> b{std::move(a)};
-         * assert(
-         *     std::size(a.get_resources()) == 0
-         *     && std::size(b.get_resources()) == 1
-         * );
-         * ```
-         */
-        ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
-        : resources{[
-#if __GNUC__ != 15 && (__clang_major__ < 16 || 21 < __clang_major__)  // ipcator#3
-            other_resources=std::move(other).get_resources()
-#else
-            &other_resources=other.resources
-#endif
-            ,
-#pragma clang diagnostic push
-#if 16 <= __clang_major__ && __clang_major__ <= 21  // TODO
-# pragma clang diagnostic ignored "-Wunused-lambda-capture"
-#endif
-            this
-#pragma clang diagnostic pop
-        ]() mutable {
-            decltype(this->resources) resources;
-
-            while (!std::empty(other_resources))
-                resources.insert(std::move(
-                    other_resources
-                    .extract(std::cbegin(other_resources))
-                    .value()
-            ));
-
-            return resources;
-        }()} {}
-
         /**
          * @brief 实现交换语义.
          */
@@ -1137,6 +1089,43 @@ class ShM_Resource: public std::pmr::memory_resource {
                 return std::move(self.resources);
         }
 #endif
+        /**
+         * @details 允许 `ShM_Resource<std::set>` 从
+         *          `ShM_Resource<std::unordered_set>`
+         *          移动构造.
+         * @note example:
+         * ```
+         * ShM_Resource<std::unordered_set> a;
+         * auto _ = a.allocate(1);
+         * assert( std::size(a.get_resources()) == 1 );
+         * ShM_Resource<std::set> b{std::move(a)};
+         * assert(
+         *     std::size(a.get_resources()) == 0
+         *     && std::size(b.get_resources()) == 1
+         * );
+         * ```
+         */
+        ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
+        : resources{[
+            other_resources=std::move(other).get_resources(),
+#pragma clang diagnostic push
+#if 16 <= __clang_major__ && __clang_major__ <= 21
+# pragma clang diagnostic ignored "-Wunused-lambda-capture"
+#endif
+            this
+#pragma clang diagnostic pop
+        ]() mutable {
+            decltype(this->resources) resources;
+
+            while (!std::empty(other_resources))
+                resources.insert(std::move(
+                    other_resources
+                    .extract(std::cbegin(other_resources))
+                    .value()
+            ));
+
+            return resources;
+        }()} {}
 
         /**
          * @brief 将 self 以类似 JSON 的格式输出.
