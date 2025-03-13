@@ -77,7 +77,7 @@
         }
 #   endif
 # else
-#   error "你需要首先升级编译器和 C++ library 以获得完整的 C++20 支持, 或安装 C++20 标准库 <format> 的替代品 fmtlib (见 <https://github.com/fmtlib/fmt>)"
+#   error "你需要首先升级编译器和标准库以获得完整的 C++20 支持, 或安装 C++20 <format> 的替代品 <https://github.com/fmtlib/fmt>"
 # endif
 #include <cstdint>  // uintptr_t
 #include <filesystem>  // filesystem::filesystem_error
@@ -137,19 +137,19 @@
 #include <unistd.h>  // close, ftruncate, getpagesize
 
 
-#ifdef __GNUG__
-# pragma GCC diagnostic ignored "-Wc++23-extensions"
-# pragma GCC diagnostic ignored "-Wc++26-extensions"
-# if 12 <= __GNUC__
-#   pragma GCC diagnostic ignored_attributes "clang::"
-# endif
-#elif defined __clang__
+#ifdef __clang__
 # pragma clang diagnostic ignored "-Wc++2a-extensions"
 # pragma clang diagnostic ignored "-Wc++2b-extensions"
 # pragma clang diagnostic ignored "-Wc++2c-extensions"
 # pragma clang diagnostic ignored "-Wc++23-attribute-extensions"
 # pragma clang diagnostic ignored "-Wc++26-extensions"
 # pragma clang diagnostic ignored "-Wunknown-attributes"
+#elif defined __GNUG__
+# pragma GCC diagnostic ignored "-Wc++23-extensions"
+# pragma GCC diagnostic ignored "-Wc++26-extensions"
+# if 12 <= __GNUC__
+#   pragma GCC diagnostic ignored_attributes "clang::"
+# endif
 #endif
 
 
