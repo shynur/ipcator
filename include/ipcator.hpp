@@ -1,3 +1,9 @@
+/* Copyright (C) 2024-2025  谢骐.  All rights reserved.
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, version 2.0.  If a copy of the MPL was not distributed with
+ * this file, You can obtain one at <http://mozilla.org/MPL/2.0/>.  */
+
 /**
  * @mainpage
  * @brief 用于 基于共享内存 的 IPC 的基础设施.
