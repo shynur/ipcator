@@ -1,4 +1,4 @@
-/* Copyright (C) 2024-2025  谢骐.  All rights reserved.
+/* Copyright (C) 2024-2025  谢骐
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, version 2.0.  If a copy of the MPL was not distributed with
