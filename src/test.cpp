@@ -1,4 +1,5 @@
 #include "ipcator.hpp"
+using namespace shynur::ipcator;
 
 int main() {
 {
@@ -117,7 +118,6 @@ assert( name.front() == '/' );
 std::cout << name << '\n';
 }
 {
-using namespace literals;
 auto creator = "/ipcator.1"_shm[123];
 creator[5] = 5;
 auto accessor = +"/ipcator.1"_shm;
@@ -164,7 +164,6 @@ assert(
 }
 {
 // writer.cpp
-using namespace literals;
 auto shm = "/ipcator.1"_shm[1000];
 auto arr = new(&shm[42]) std::array<char, 32>;
 (*arr)[15] = 9;

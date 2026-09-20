@@ -745,14 +745,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             }
 
             /* As A Comparator */
-#ifdef __cpp_static_call_operator
-            static
-#endif
-            bool operator()[[gnu::cold]](const auto& a, const auto& b)
-#ifndef __cpp_static_call_operator
-            const
-#endif
-            noexcept {
+            bool operator()[[gnu::cold]](const auto& a, const auto& b) const noexcept {
                 const auto pa = get_addr(a), pb = get_addr(b);
 
                 if constexpr (using_ordered_set)
@@ -761,14 +754,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                     return pa == pb;
             }
             /* As A Hasher */
-#ifdef __cpp_static_call_operator
-            static
-#endif
-            auto operator()(const auto& shm)
-#ifndef __cpp_static_call_operator
-            const
-#endif
-            noexcept -> std::size_t {
+            auto operator()(const auto& shm) const noexcept -> std::size_t {
                 const auto addr = get_addr(shm);
                 return std::hash<std::decay_t<decltype(addr)>>{}(addr);
             }
@@ -1525,11 +1511,7 @@ struct ShM_Reader {
         auto gc_ [[gnu::cold]] () noexcept {
             return std::erase_if(
                 this->cache,
-                [](const auto& shm)
-#ifdef __cpp_static_call_operator
-                static
-#endif
-                {
+                [](const auto& shm) {
                     return
 #if __cplusplus <= 201703L
                         shm.unique()
@@ -1586,26 +1568,12 @@ struct ShM_Reader {
             }
 
             /* Hash */
-#ifdef __cpp_static_call_operator
-            static
-#endif
-            auto operator()(const auto& shm)
-#ifndef __cpp_static_call_operator
-            const
-#endif
-            noexcept -> std::size_t {
+            auto operator()(const auto& shm) const noexcept -> std::size_t {
                 const auto name = get_name(shm);
                 return std::hash<std::decay_t<decltype(name)>>{}(name);
             }
             /* KeyEqual */
-#ifdef __cpp_static_call_operator
-            static
-#endif
-            bool operator()[[gnu::cold]](const auto& a, const auto& b)
-#ifndef __cpp_static_call_operator
-            const
-#endif
-            noexcept {
+            bool operator()[[gnu::cold]](const auto& a, const auto& b) const noexcept {
                 return get_name(a) == get_name(b);
             }
         };
