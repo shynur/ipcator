@@ -5,6 +5,3 @@
 /bin/
 /lib/?*-build/
 /lib/archives/
-
-/docs/*
-!/docs/Doxyfile.ini
