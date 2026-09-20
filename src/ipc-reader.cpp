@@ -1,4 +1,6 @@
 #include "ipcator.hpp"
+using namespace shynur::ipcator;
+
 ShM_Reader rd;
 
 int main() {

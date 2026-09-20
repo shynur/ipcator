@@ -20,8 +20,7 @@
  *          `ShM_Resource` 拥有若干 `Shared_Memory<true>`, `Shared_Memory` 即是对 POSIX
  *          shared memory 的抽象.  <br />
  *          读取器有 `ShM_Reader`.  工具函数/类/概念有 `ceil_to_page_size(std::size_t)`,
- *          `generate_shm_UUName()`, [namespace literals](./namespaceliterals.html),
- *          [concepts](./concepts.html).
+ *          `generate_shm_UUName()`, literals (`operator""_shm`), concepts.
  * @note 关于 POSIX shared memory 生命周期的介绍: <br />
  *       我们使用 `Shared_Memory` 实例对 POSIX shared memory 进行引用计数, 这个计数是跨
  *       进程的, 并且和 `Shared_Memory` 的生命周期相关联, 一个实例对应 **1** 个计数.
@@ -396,9 +395,7 @@ class Shared_Memory: public std::span<
                 0777
             ));
             [[assume(fd != -1)]];
-#ifdef IPCATOR_USED_BY_SEER_RBK
             ::fchmod(fd, 0777);
-#endif
 
             if constexpr (creat) {
                 // 设置 shm obj 的大小:
@@ -595,8 +592,6 @@ struct std::formatter<::shynur::ipcator::Shared_Memory<creat, writable>
 };
 namespace shynur::ipcator {
 
-
-namespace literals {
     /**
      * @brief 创建 `Shared_Memory` 实例的快捷方式.
      * @details
@@ -605,7 +600,6 @@ namespace literals {
      * - 不创建, 只将目标文件以只读模式映射至本地: `-"/filename"_shm`.
      * @note example:
      * ```
-     * using namespace literals;
      * auto creator = "/ipcator.1"_shm[123];
      * creator[5] = 5;
      * auto accessor = +"/ipcator.1"_shm;
@@ -630,7 +624,6 @@ namespace literals {
         };
         return ShM_Constructor_Proxy{name};
     }
-}
 
 
 inline namespace utils {
@@ -1488,7 +1481,6 @@ struct ShM_Reader {
          * @note example:
          * ```
          * // writer.cpp
-         * using namespace literals;
          * auto shm = "/ipcator.1"_shm[1000];
          * auto arr = new(&shm[42]) std::array<char, 32>;
          * (*arr)[15] = 9;

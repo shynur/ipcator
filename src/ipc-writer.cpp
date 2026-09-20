@@ -1,5 +1,5 @@
 #include "ipcator.hpp"
-using namespace literals;
+using namespace shynur::ipcator;
 
 int shared_fn(int n) { return 2 * n + 1; }  // 要传递的函数.
 int main(int, const char *const av[]) {
