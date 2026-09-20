@@ -678,10 +678,6 @@ inline namespace utils {
 template <template <typename... T> class set_t = std::set>
 class ShM_Resource: public std::pmr::memory_resource {
     public:
-        /**
-         * @cond
-         * 请 Doxygen 忽略该变量, 因为它总是显示初始值 (而我不想这样).
-         */
         static constexpr bool using_ordered_set = []() consteval {
             if constexpr (requires {
                 requires std::same_as<set_t<int>, std::set<int>>;
@@ -696,7 +692,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 std::unreachable();
 #endif
             }
-        }();  /// @endcond
+        }();
     private:
         struct ShM_As_Addr {
             using is_transparent = int;
@@ -733,44 +729,6 @@ class ShM_Resource: public std::pmr::memory_resource {
             set_t<Shared_Memory<true>, ShM_As_Addr, ShM_As_Addr>
         > resources;
     protected:
-#ifdef IPCATOR_IS_BEING_DOXYGENING  // stupid doxygen
-        /**
-         * @brief 分配 POSIX shared memory.
-         * @param alignment 对齐要求.
-         * @details 新建 `Shared_Memory<true>`, 不作任何切分,
-         *          因此这是粒度最粗的分配器.
-         * @return `Shared_Memory<true>` 的 `std::data` 值.
-         * @note example:
-         * ```
-         * auto allocator = ShM_Resource<std::set>{};
-         * auto _ = allocator.allocate(12); _ = allocator.allocate(34, 8);
-         *      allocator = ShM_Resource<std::unordered_set>{};
-         *      _ = allocator.allocate(56), _ = allocator.allocate(78, 16);
-         * ```
-         */
-        void *allocate(
-            std::size_t size, std::size_t alignment = alignof(std::max_align_t)
-        );
-        /**
-         * @brief 析构对应的 `Shared_Memory<true>`.
-         * @param area 与 deallocation 对应的那次 allocation 的返回值.
-         * @param size 若定义了 `NDEBUG` 宏, 传入任意值即可; 否则, 表示
-         *             POSIX shared memory 的大小, 必须与请求分配 (`allocate`)
-         *             时的大小 (`size`) 一致.
-         * @note example:
-         * ```
-         * auto allocator_1 = ShM_Resource<std::set>{};
-         * allocator_1.deallocate(
-         *     allocator_1.allocate(111), 111
-         * );
-         * auto allocator_2 = ShM_Resource<std::unordered_set>{};
-         * allocator_2.deallocate(
-         *     allocator_2.allocate(222), 222
-         * );
-         * ```
-         */
-        void deallocate(void *area, std::size_t size);
-#endif
         void *do_allocate [[using gnu: returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
         ) [[clang::lifetimebound]] override {
@@ -859,6 +817,40 @@ class ShM_Resource: public std::pmr::memory_resource {
                 return false;
         }
     public:
+        /**
+         * @brief 分配 POSIX shared memory.
+         * @details 新建 `Shared_Memory<true>`, 不作任何切分,
+         *          因此这是粒度最粗的分配器.
+         * @return `Shared_Memory<true>` 的 `std::data` 值.
+         * @note example:
+         * ```
+         * auto allocator = ShM_Resource<std::set>{};
+         * auto _ = allocator.allocate(12); _ = allocator.allocate(34, 8);
+         *      allocator = ShM_Resource<std::unordered_set>{};
+         *      _ = allocator.allocate(56), _ = allocator.allocate(78, 16);
+         * ```
+         */
+        using std::pmr::memory_resource::allocate;
+        /**
+         * @brief 析构对应的 `Shared_Memory<true>`.
+         * @param area 与 deallocation 对应的那次 allocation 的返回值.
+         * @param size 若定义了 `NDEBUG` 宏, 传入任意值即可; 否则, 表示
+         *             POSIX shared memory 的大小, 必须与请求分配 (`allocate`)
+         *             时的大小 (`size`) 一致.
+         * @note example:
+         * ```
+         * auto allocator_1 = ShM_Resource<std::set>{};
+         * allocator_1.deallocate(
+         *     allocator_1.allocate(111), 111
+         * );
+         * auto allocator_2 = ShM_Resource<std::unordered_set>{};
+         * allocator_2.deallocate(
+         *     allocator_2.allocate(222), 222
+         * );
+         * ```
+         */
+        using std::pmr::memory_resource::deallocate;
+
         /**
          * @brief 构造函数.
          */
@@ -1180,6 +1172,31 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
                 this->monotonic_buffer_resource::upstream_resource()
             );
         }
+
+        /**
+         * @brief 强制释放所有已分配而未收回的内存.
+         * @details 将当前缓冲区和下个缓冲区的大小设置为其构造时的
+         *          `initial_size`.
+         * @note 内存的释放仅代表 `Shared_Memory<true>` 的析构, 因此
+         *       其它进程仍可能从这些内存中读取消息.  (See
+         *       `Shared_Memory::~Shared_Memory()`.)
+         */
+        using std::pmr::monotonic_buffer_resource::release;
+        /**
+         * @brief 从某片 POSIX shared memory 区域中划出一块分配.
+         * @details 首先检查 buffer 的剩余空间, 如果不够, 则向⬆️游
+         *          获取新的 `Shared_Memory<true>` (每次向⬆️游申请
+         *          的 shared memory 的大小以几何级数增加) 加入到
+         *          剩余空间中.  然后, 从剩余空间中从中划出一块.
+         */
+        using std::pmr::monotonic_buffer_resource::allocate;
+        /**
+         * @brief 无操作.
+         * @details Buffer 在分配时根本不追踪所有 allocation 的位置,
+         *          它单纯地增长, 以此提高分配速度.  因此也无法根据
+         *          指定位置响应 deallocation.
+         */
+        using std::pmr::monotonic_buffer_resource::deallocate;
     protected:
         void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
@@ -1201,35 +1218,6 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
             // ‘std::pmr::monotonic_buffer_resource::deallocate’ 的函数体其实是空的.
             this->monotonic_buffer_resource::do_deallocate(area, size, alignment);
         }
-#ifdef IPCATOR_IS_BEING_DOXYGENING  // stupid doxygen
-        /**
-         * @brief 强制释放所有已分配而未收回的内存.
-         * @details 将当前缓冲区和下个缓冲区的大小设置为其构造时的
-         *          `initial_size`.
-         * @note 内存的释放仅代表 `Shared_Memory<true>` 的析构, 因此
-         *       其它进程仍可能从这些内存中读取消息.  (See
-         *       `Shared_Memory::~Shared_Memory()`.)
-         */
-        void release();
-        /**
-         * @brief 从某片 POSIX shared memory 区域中划出一块分配.
-         * @param alignment 可选.
-         * @details 首先检查 buffer 的剩余空间, 如果不够, 则向⬆️游
-         *          获取新的 `Shared_Memory<true>` (每次向⬆️游申请
-         *          的 shared memory 的大小以几何级数增加) 加入到
-         *          剩余空间中.  然后, 从剩余空间中从中划出一块.
-         */
-        void *allocate(
-            std::size_t size, std::size_t alignment = alignof(std::max_align_t)
-        );
-        /**
-         * @brief 无操作.
-         * @details Buffer 在分配时根本不追踪所有 allocation 的位置,
-         *          它单纯地增长, 以此提高分配速度.  因此也无法根据
-         *          指定位置响应 deallocation.
-         */
-        void deallocate(void *area) = delete;
-#endif
 };
 
 
@@ -1323,7 +1311,6 @@ class ShM_Pool: public std::conditional_t<
             );
         }
 
-#ifdef IPCATOR_IS_BEING_DOXYGENING  // stupid doxygen
         /**
          * @brief 查看构造时指定的配置选项的实际值.
          * @details 这些选项的实际值未必和构造时提供
@@ -1342,7 +1329,7 @@ class ShM_Pool: public std::conditional_t<
          *           << pools.options().max_blocks_per_chunk << '\n';
          * ```
          */
-        std::pmr::pool_options options() const;
+        using midstream_pool_t::options;
         /**
          * @brief 强制释放所有已分配而未收回的内存.
          * @note 内存的释放仅代表 `Shared_Memory<true>` 的析构, 因此
@@ -1357,14 +1344,11 @@ class ShM_Pool: public std::conditional_t<
          * assert( std::size(pools.upstream_resource()->get_resources()) == 0 );
          * ```
          */
-        void release();
+        using midstream_pool_t::release;
         /**
          * @brief 从共享内存中分配 block.
-         * @param alignment 对齐要求.
          */
-        void *allocate(
-            std::size_t size, std::size_t alignment = alignof(std::max_align_t)
-        );
+        using midstream_pool_t::allocate;
         /**
          * @brief 回收 block.
          * @param area `allocate` 的返回值
@@ -1373,8 +1357,7 @@ class ShM_Pool: public std::conditional_t<
          *          闲置的状态, 此时可能会触发🗑️GC, 也就是被析构, 然而时机是不确定的, 由
          *          `std::pmr::unsynchronized_pool_resource` 的实现决定.
          */
-        void deallocate(void *area, std::size_t size);
-#endif
+        using midstream_pool_t::deallocate;
 };
 
 
