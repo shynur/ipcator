@@ -98,10 +98,7 @@ make test ipc
 
 ## 用法
 
-> <code>#define IPCATOR_NAMESPACE some_namespace
-> #include "<a href="./include/ipcator.hpp">ipcator.hpp</a>"</code>
-
-如果 `IPCATOR_NAMESPACE` 宏 未定义, 则 API 置于 *global namespace*.
+> <code>#include "<a href="./include/ipcator.hpp">ipcator.hpp</a>"</code>
 
 ### API 使用示例
 

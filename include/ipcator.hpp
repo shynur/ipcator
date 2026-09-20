@@ -38,7 +38,6 @@
  *       一片 POSIX shared memory 最多增加 **1** 个引用计数.  当 `ShM_Reader` 析构时, 释放
  *       所有资源 (所以也会将缓存过的 POSIX shared memory 的引用计数减一).
  * @note 定义 `IPCATOR_LOG` 宏可以打开日志.  调试用.
- * @note 定义 `IPCATOR_NAMESPACE` 宏可以将该文件内的所有 API 放到指定的命名空间.
  */
 
 #pragma once
@@ -132,23 +131,16 @@
 #include <sys/stat.h>  // fstat, struct stat, fchmod
 #include <unistd.h>  // close, ftruncate, getpagesize
 
-
-#ifdef IPCATOR_NAMESPACE
-# define IPCATOR_OPEN_NAMESPACE  namespace IPCATOR_NAMESPACE {
-# define IPCATOR_CLOSE_NAMESPACE }
-#else
-# define IPCATOR_OPEN_NAMESPACE
-# define IPCATOR_CLOSE_NAMESPACE
-#endif
-IPCATOR_OPEN_NAMESPACE
-
-
-using namespace std::literals;
 #ifndef __cpp_size_t_suffix
-    consteval auto operator "" uz(unsigned long long integer) -> std::size_t {
-        return integer;
+    namespace std::literals {
+        consteval auto operator "" uz(unsigned long long integer) -> std::size_t {
+            return integer;
+        }
     }
 #endif
+using namespace std::literals;
+
+namespace shynur::ipcator {
 
 
 /* 对 POSIX API 的复刻, 但参数的类型更多样.  */
@@ -560,13 +552,9 @@ static_assert(
 );
 
 
-IPCATOR_CLOSE_NAMESPACE
+}
 template <auto creat, auto writable>
-struct std::formatter<
-#ifdef IPCATOR_NAMESPACE
-        IPCATOR_NAMESPACE::
-#endif
-        Shared_Memory<creat, writable>
+struct std::formatter<::shynur::ipcator::Shared_Memory<creat, writable>
     > {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
@@ -605,7 +593,7 @@ struct std::formatter<
         );
     }
 };
-IPCATOR_OPEN_NAMESPACE
+namespace shynur::ipcator {
 
 
 namespace literals {
@@ -1125,13 +1113,9 @@ static_assert( std::movable<ShM_Resource<std::set>> );
 static_assert( std::movable<ShM_Resource<std::unordered_set>> );
 
 
-IPCATOR_CLOSE_NAMESPACE
+}
 template <template <typename... T> class set_t>
-struct std::formatter<
-#ifdef IPCATOR_NAMESPACE
-        IPCATOR_NAMESPACE::
-#endif
-        ShM_Resource<set_t>
+struct std::formatter<::shynur::ipcator::ShM_Resource<set_t>
     > {
     constexpr auto parse(const auto& parser) {
         if (const auto p = parser.begin(); p != parser.end() && *p != '}')
@@ -1188,7 +1172,7 @@ struct std::formatter<
         }
     }
 };
-IPCATOR_OPEN_NAMESPACE
+namespace shynur::ipcator {
 
 
 /**
@@ -1643,12 +1627,4 @@ struct ShM_Reader {
 };
 
 
-IPCATOR_CLOSE_NAMESPACE
-#if defined IPCATOR_USED_BY_SEER_RBK
-using namespace
-# ifdef IPCATOR_NAMESPACE
-                IPCATOR_NAMESPACE::
-# endif
-                                   literals;
-using namespace std::literals;
-#endif
+}
