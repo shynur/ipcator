@@ -1512,13 +1512,7 @@ struct ShM_Reader {
             return std::erase_if(
                 this->cache,
                 [](const auto& shm) {
-                    return
-#if __cplusplus <= 201703L
-                        shm.unique()
-#else
-                        shm.use_count() == 1
-#endif
-                    ;
+                    return shm.use_count() == 1;
                 }
             );
         }
