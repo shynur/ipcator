@@ -51,20 +51,9 @@
                 experimental::vformat, experimental::vformat_to,
                 experimental::make_format_args;
         }
-#   elif __has_include("fmt/format.h")
-#       include "fmt/format.h"
-#       if FMT_VERSION < 10'00'00L
-#           error "你的 `libfmt' 版本太低了"
-#       else
-            namespace std {
-                using ::fmt::format,
-                    ::fmt::formatter, ::fmt::format_error,
-                    ::fmt::vformat, ::fmt::vformat_to,
-                    ::fmt::make_format_args;
-            }
-#       endif
 #   else
-#       error "你需要首先升级编译器和标准库以获得完整的 C++20 支持, 或安装 C++20 <format> 的替代品 <https://github.com/fmtlib/fmt>"
+#       undef IPCATOR_LOG
+#       warning "你需要首先升级编译器和标准库以获得完整的 C++20 <format> 支持, 才能启用日志"
 #   endif
 #endif
 #if !__has_include(<source_location>)
