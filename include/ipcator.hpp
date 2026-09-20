@@ -40,96 +40,60 @@
  */
 
 #pragma once
-#include <version>
-#include <algorithm>  // ranges::fold_left
-# if __has_include(<experimental/algorithm>)
-#   include <experimental/algorithm>  // experimental::sample
-# endif
-#include <atomic>  // atomic_uint, memory_order_relaxed
+#include <bits/stdc++.h>
 #include <cassert>
-#include <cerrno>  // EPERM, errno
-#include <chrono>
-#include <climits>  // NAME_MAX
-#include <concepts>  // {,unsigned_}integral, convertible_to, copy_constructible, same_as, movable
-#include <cstddef>  // size_t
-# if __has_include(<format>)
-#   include <format>  // format, formatter, format_error, vformat{_to,}, make_format_args
-# elif __has_include(<experimental/format>)
-#   include <experimental/format>
-    namespace std {
-        using experimental::format,
-              experimental::formatter, experimental::format_error,
-              experimental::vformat, experimental::vformat_to,
-              experimental::make_format_args;
-    }
-# elif __has_include("fmt/format.h")
-#   include "fmt/format.h"
-#   if FMT_VERSION < 10'00'00L
-#       error "你的 `libfmt' 版本太低了"
+#if !__has_include(<format>)
+#   if __has_include(<experimental/format>)
+#       include <experimental/format>
+        namespace std {
+            using experimental::format,
+                experimental::formatter, experimental::format_error,
+                experimental::vformat, experimental::vformat_to,
+                experimental::make_format_args;
+        }
+#   elif __has_include("fmt/format.h")
+#       include "fmt/format.h"
+#       if FMT_VERSION < 10'00'00L
+#           error "你的 `libfmt' 版本太低了"
+#       else
+            namespace std {
+                using ::fmt::format,
+                    ::fmt::formatter, ::fmt::format_error,
+                    ::fmt::vformat, ::fmt::vformat_to,
+                    ::fmt::make_format_args;
+            }
+#       endif
+#   else
+#       error "你需要首先升级编译器和标准库以获得完整的 C++20 支持, 或安装 C++20 <format> 的替代品 <https://github.com/fmtlib/fmt>"
+#   endif
+#endif
+#if !__has_include(<source_location>)
+#   if __has_include(<experimental/source_location>)
+#       include <experimental/source_location>
+        namespace std { using typename experimental::source_location; }
 #   else
         namespace std {
-            using ::fmt::format,
-                  ::fmt::formatter, ::fmt::format_error,
-                  ::fmt::vformat, ::fmt::vformat_to,
-                  ::fmt::make_format_args;
+            struct source_location {
+                static consteval auto current() noexcept {
+                    return source_location{};
+                }
+                constexpr auto function_name() const noexcept {
+                    return "某函数";
+                }
+            };
         }
 #   endif
-# else
-#   error "你需要首先升级编译器和标准库以获得完整的 C++20 支持, 或安装 C++20 <format> 的替代品 <https://github.com/fmtlib/fmt>"
-# endif
-#include <cstdint>  // uintptr_t
-#include <filesystem>  // filesystem::filesystem_error
-#include <functional>  // bind{_back,}, bit_or, plus
-#include <future>  // async, future_status::ready
-#include <iostream>  // clog
-#include <iterator>  // size, {,c}{begin,end}, data, empty, back_inserter
-#include <memory>  // shared_ptr
-#include <memory_resource>  // pmr::{memory_resource,monotonic_buffer_resource,{,un}synchronized_pool_resource,pool_options}
-#include <new>  // bad_alloc
-#include <ostream>  // ostream
-#include <ranges>  // ranges::find_if, views::{chunk,transform,join_with,iota}
-#include <set>
-# if __has_include(<source_location>)
-#   include <source_location>  // source_location::current
-# elif __has_include(<experimental/source_location>)
-#   include <experimental/source_location>
-    namespace std { using typename experimental::source_location; }
-# else
-#   warning "连 <source_location> 都没有, 虽然我给你打了个补丁, 但还是建议你退群"
-    namespace std {
-        struct source_location {
-            static consteval auto current() noexcept {
-                return source_location{};
-            }
-            constexpr auto function_name() const noexcept {
-                return "某函数";
-            }
-        };
-    }
-# endif
-#include <span>
-#include <stdexcept>  // invalid_argument
-#include <string>
-#include <string_view>
-#include <system_error>  // make_error_code, errc::no_such_file_or_directory
-#include <thread>  // this_thread::{sleep_for,yield}
-#include <tuple>  // ignore
-#include <type_traits>  // conditional_t, is_const{_v,}, remove_reference{_t,}, is_same_v, decay_t, disjunction, is_lvalue_reference
-#include <unordered_set>
-# include <utility>  // as_const, move, swap, unreachable, hash, exchange
-# ifndef __cpp_lib_unreachable
+#endif
+#if __has_include(<experimental/algorithm>)
+#   include <experimental/algorithm>
+#endif
+#ifndef __cpp_lib_unreachable
     namespace std {
         [[noreturn]] inline void unreachable() {
             __builtin_unreachable();
         }
     }
-# endif
-#include <variant>  // monostate
-#include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}, open
-#include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
-#include <sys/stat.h>  // fstat, struct stat, fchmod
-#include <unistd.h>  // close, ftruncate, getpagesize
-
+#endif
 #ifndef __cpp_size_t_suffix
     namespace std::literals {
         consteval auto operator "" uz(unsigned long long integer) -> std::size_t {
@@ -137,6 +101,10 @@
         }
     }
 #endif
+#include <fcntl.h>  // O_{CREAT,RDWR,RDONLY,EXCL}, open
+#include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
+#include <sys/stat.h>  // fstat, struct stat, fchmod
+#include <unistd.h>  // close, ftruncate, getpagesize
 using namespace std::literals;
 
 namespace shynur::ipcator {
