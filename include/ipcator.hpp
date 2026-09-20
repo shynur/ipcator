@@ -858,7 +858,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             const auto whatcanisay_shm_out = std::move(
                 this->resources
 #ifdef __cpp_lib_associative_heterogeneous_erasure
-                .template extract<const void *>(area)
+                .extract((const void *)area)
 #else
                 .extract(
                     std::find_if(
