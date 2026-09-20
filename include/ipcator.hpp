@@ -1520,9 +1520,6 @@ struct ShM_Reader {
                         return (element_type *)(this->shm->data() + this->offset);
                     }
                     auto& operator*() const { return *this->operator->(); }
-#ifdef IPCATOR_USED_BY_SEER_RBK
-                    auto cnt_ref_shm() const { return this->shm.use_count(); }
-#endif
             };
 
             return Iterator{this->select_shm(shm_name), offset};
