@@ -440,9 +440,6 @@ class Shared_Memory: public std::span<
                 assert(size);
                 [[assume(size)]];  // POSIX mmap 要求.
                 const auto area_addr = [&] {
-#ifdef IPCATOR_OFAST
-                    static constinit auto failed_because_of_exec = false;
-#endif
                     const auto mmap_executable = [&](bool use_prot_exec) {
                         return ::mmap(
                             nullptr, size,
@@ -452,18 +449,8 @@ class Shared_Memory: public std::span<
                         );
                     };
 
-                    auto addr = mmap_executable(
-#ifndef IPCATOR_OFAST
-                        true
-#else
-                        failed_because_of_exec ? false : true
-#endif
-                    );
+                    auto addr = mmap_executable(true);
                     if (addr == MAP_FAILED && errno == EPERM)
-#ifdef IPCATOR_OFAST
-                        [[unlikely]]  // 因为只会设置这么一次:
-                        failed_because_of_exec = true,
-#endif
 #ifdef IPCATOR_LOG
                         std::clog << "Failed to map shm as PROT_EXEC.\n",
 #endif
