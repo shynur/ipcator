@@ -37,15 +37,9 @@
  *       因此 `ShM_Reader` 对 POSIX shared memory 的引用计数也有贡献, 且保证单个实例对同
  *       一片 POSIX shared memory 最多增加 **1** 个引用计数.  当 `ShM_Reader` 析构时, 释放
  *       所有资源 (所以也会将缓存过的 POSIX shared memory 的引用计数减一).
- * @warning 要构建 release 版本, 请在文件范围内定义以下宏, 否则性能会非常差:
- *          - `NDEBUG`: 删除诸多非必要的校验措施;
- *          - `IPCATOR_OFAST`: 开启额外优化.  可能会导致观测到 API 的行为发生变化, 但此类
- *            变化通常无关紧要 (例如, 不判断 allocation 的 alignment 参数是否能被满足, 因为
- *            基本不可能不满足).
  * @note 定义 `IPCATOR_LOG` 宏可以打开日志.  调试用.
  * @note 定义 `IPCATOR_NAMESPACE` 宏可以将该文件内的所有 API 放到指定的命名空间.
  */
-/* clang-format off */
 
 #pragma once
 #include <version>
@@ -128,11 +122,7 @@
 # ifndef __cpp_lib_unreachable
     namespace std {
         [[noreturn]] inline void unreachable() {
-#  if defined _MSC_VER && !defined __clang__
-            __assume(false);
-#  else
             __builtin_unreachable();
-#  endif
         }
     }
 # endif
@@ -141,22 +131,6 @@
 #include <sys/mman.h>  // m{,un}map, shm_{open,unlink}, PROT_{WRITE,READ,EXEC}, MAP_{SHARED,FAILED,NORESERVE}
 #include <sys/stat.h>  // fstat, struct stat, fchmod
 #include <unistd.h>  // close, ftruncate, getpagesize
-
-
-#ifdef __clang__
-# pragma clang diagnostic ignored "-Wc++2a-extensions"
-# pragma clang diagnostic ignored "-Wc++2b-extensions"
-# pragma clang diagnostic ignored "-Wc++2c-extensions"
-# pragma clang diagnostic ignored "-Wc++23-attribute-extensions"
-# pragma clang diagnostic ignored "-Wc++26-extensions"
-# pragma clang diagnostic ignored "-Wunknown-attributes"
-#elif defined __GNUG__
-# pragma GCC diagnostic ignored "-Wc++23-extensions"
-# pragma GCC diagnostic ignored "-Wc++26-extensions"
-# if 12 <= __GNUC__
-#   pragma GCC diagnostic ignored_attributes "clang::"
-# endif
-#endif
 
 
 #ifdef IPCATOR_NAMESPACE
@@ -171,16 +145,9 @@ IPCATOR_OPEN_NAMESPACE
 
 using namespace std::literals;
 #ifndef __cpp_size_t_suffix
-#   ifdef IPCATOR_USED_BY_SEER_RBK
-#       pragma clang diagnostic push
-#       pragma clang diagnostic ignored "-Wuser-defined-literals"
-#   endif
     consteval auto operator "" uz(unsigned long long integer) -> std::size_t {
         return integer;
     }
-#   ifdef IPCATOR_USED_BY_SEER_RBK
-#       pragma clang diagnostic pop
-#   endif
 #endif
 
 
@@ -190,13 +157,7 @@ namespace POSIX {
 
     inline auto close(const decltype(::open("", {})) *const fd) noexcept {
 #ifdef IPCATOR_LOG
-        std::clog << "调用了 `"s +
-# if defined __GNUG__ || defined __clang__
-                     __PRETTY_FUNCTION__
-# else
-                     __func__
-# endif
-                     + "` (手写的 POSIX close 的重载版本).\n";
+        std::clog << "调用了 `"s + __PRETTY_FUNCTION__ + "` (手写的 POSIX close 的重载版本).\n";
 #endif
         return ::close(*fd);
     }
@@ -264,11 +225,7 @@ class Shared_Memory: public std::span<
          * ```
          */
         Shared_Memory(
-            const std::string
-#ifdef IPCATOR_OFAST
-                             &
-#endif
-                               name, const std::size_t size
+            const std::string name, const std::size_t size
         ) requires(creat): span{
             Shared_Memory::map_shm(name, size),
             size,
@@ -295,11 +252,7 @@ class Shared_Memory: public std::span<
          * ```
          */
         Shared_Memory(
-            const std::string
-#ifdef IPCATOR_OFAST
-                             &
-#endif
-                               name
+            const std::string name
         ) noexcept(noexcept(Shared_Memory::map_shm(""s))) requires(!creat)
         : span{
             [&]() -> span {
@@ -397,9 +350,7 @@ class Shared_Memory: public std::span<
          */
         auto& get_name() const { return this->name; }
 
-#if __has_cpp_attribute(nodiscard)
         [[nodiscard]]
-#endif
         static auto map_shm(const std::string& name, const std::unsigned_integral auto... size)
             noexcept(false)  // 创建时可能文件已存在; 打开时可能报 “no such file” 错误.
             requires(sizeof...(size) == creat)
@@ -452,9 +403,7 @@ class Shared_Memory: public std::span<
                 (creat ? O_CREAT|O_EXCL : 0) | (writable ? O_RDWR : O_RDONLY),
                 0777
             ));
-#if __has_cpp_attribute(assume)
             [[assume(fd != -1)]];
-#endif
 #ifdef IPCATOR_USED_BY_SEER_RBK
             ::fchmod(fd, 0777);
 #endif
@@ -489,9 +438,7 @@ class Shared_Memory: public std::span<
                 }()
             ] {
                 assert(size);
-#if __has_cpp_attribute(assume)
                 [[assume(size)]];  // POSIX mmap 要求.
-#endif
                 const auto area_addr = [&] {
 #ifdef IPCATOR_OFAST
                     static constinit auto failed_because_of_exec = false;
@@ -902,16 +849,9 @@ class ShM_Resource: public std::pmr::memory_resource {
          */
         void deallocate(void *area, std::size_t size);
 #endif
-#ifdef IPCATOR_OFAST
-        [[gnu::assume_aligned(4096)]]
-#endif
         void *do_allocate [[using gnu: returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
-        ) noexcept
-#ifndef IPCATOR_OFAST
-                  (false)
-#endif
-        [[clang::lifetimebound]] override {
+        ) [[clang::lifetimebound]] override {
             if (alignment > ::getpagesize() + 0u) [[unlikely]] {
                 struct TooLargeAlignment: std::bad_alloc {
                     const std::string message;
@@ -927,9 +867,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                         return this->message.c_str();
                     }
                 };
-#ifndef IPCATOR_OFAST
                 throw TooLargeAlignment{alignment};
-#endif
             }
 
             const auto [inserted, ok] = this->resources.emplace(
@@ -937,9 +875,8 @@ class ShM_Resource: public std::pmr::memory_resource {
                 size
             );
             assert(ok);
-#if __has_cpp_attribute(assume)
             [[assume(ok)]];
-#endif
+
             if constexpr (!using_ordered_set)
                 this->last_inserted = std::to_address(
 #if _GLIBCXX_RELEASE == 10  // GCC 的 bug, 见 ipcator#2.
@@ -957,11 +894,7 @@ class ShM_Resource: public std::pmr::memory_resource {
             void *const area [[clang::noescape]],
             const std::size_t size [[maybe_unused]],
             const std::size_t alignment [[maybe_unused]]
-        )
-#ifdef IPCATOR_OFAST
-          noexcept
-#endif
-          override {
+        ) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
 
             // 标准要求 allocation 与 deallocation 的 ‘alignment’ 要匹配, 否则是 undefined
@@ -1114,12 +1047,7 @@ class ShM_Resource: public std::pmr::memory_resource {
         ShM_Resource(ShM_Resource<std::unordered_set>&& other) requires(using_ordered_set)
         : resources{[
             other_resources=std::move(other).get_resources(),
-#pragma clang diagnostic push
-#if 16 <= __clang_major__ && __clang_major__ <= 21
-# pragma clang diagnostic ignored "-Wunused-lambda-capture"
-#endif
             this
-#pragma clang diagnostic pop
         ]() mutable {
             decltype(this->resources) resources;
 
@@ -1201,9 +1129,7 @@ class ShM_Resource: public std::pmr::memory_resource {
                 !using_ordered_set,
                 const Shared_Memory<true> *, std::monostate
             > last_inserted [[
-#if __has_cpp_attribute(indeterminate)
                 indeterminate,
-#endif
                 no_unique_address
             ]];
 };
@@ -1306,17 +1232,12 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
          * @warning `initial_size` 不可为 0.
          */
         Monotonic_ShM_Buffer(const std::size_t initial_size = 1)
-#ifdef IPCATOR_OFAST
-        noexcept
-#endif
         : monotonic_buffer_resource{
             ceil_to_page_size(initial_size),
             new ShM_Resource<std::unordered_set>,
         } {
             assert(initial_size);
-#if __has_cpp_attribute(assume)
             [[assume(initial_size)]];
-#endif
         }
         ~Monotonic_ShM_Buffer() override {
             this->release();
@@ -1344,11 +1265,7 @@ struct Monotonic_ShM_Buffer: std::pmr::monotonic_buffer_resource {
     protected:
         void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
-        )
-#ifdef IPCATOR_OFAST
-          noexcept
-#endif
-          override {
+        ) override {
             const auto area = this->monotonic_buffer_resource::do_allocate(
                 size, alignment
             );
@@ -1432,11 +1349,7 @@ class ShM_Pool: public std::conditional_t<
     protected:
         void *do_allocate [[using gnu: hot, returns_nonnull, alloc_size(2)]] (
             const std::size_t size, const std::size_t alignment
-        )
-#ifdef IPCATOR_OFAST
-          noexcept
-#endif
-          override {
+        ) override {
             const auto area = this->midstream_pool_t::do_allocate(
                 size, alignment
             );
@@ -1448,11 +1361,7 @@ class ShM_Pool: public std::conditional_t<
             void *const area [[clang::noescape]],
             const std::size_t size,
             const std::size_t alignment
-        )
-#ifdef IPCATOR_OFAST
-          noexcept
-#endif
-          override {
+        ) override {
             IPCATOR_LOG_ALLO_OR_DEALLOC("red");
             this->midstream_pool_t::do_deallocate(area, size, alignment);
         }
@@ -1695,9 +1604,7 @@ struct ShM_Reader {
                     std::make_shared<Shared_Memory<false, writable>>(std::string{name})
                 );
                 assert(ok);
-#if __has_cpp_attribute(assume)
                 [[assume(ok)]];
-#endif
                 return *inserted;
             }
         }
