@@ -299,7 +299,7 @@ class Shared_Memory: public std::span<
         auto& get_name() const { return this->name; }
 
         [[nodiscard]]
-        static auto map_shm(const std::string& name, const std::unsigned_integral auto... size)
+        static auto map_shm(const std::string name, const std::unsigned_integral auto... size)
             noexcept(false)  // 创建时可能文件已存在; 打开时可能报 “no such file” 错误.
             requires(sizeof...(size) == creat)
         {
@@ -330,16 +330,14 @@ class Shared_Memory: public std::span<
                         // 不要加句号:
                         creat ? "重名的 共享内存对象 已存在, 等待它被删除... creator 等待超时"
                               : "共享内存对象 仍未被创建, 导致 accessor 等待超时",
-                        std::format(
 #ifdef __linux__
-                            "/dev/shm/"
+                        "/dev/shm/"
 #elif defined __FreeBSD__ || defined __APPLE__
-                            "/var/run/shm/"
+                        "/var/run/shm/"
 #elif defined __NetBSD__
-                            "/var/shm/"
+                        "/var/shm/"
 #endif
-                            "{}", name
-                        ),
+                        + name,
                         std::make_error_code(
                             creat ? std::errc::file_exists
                                   : std::errc::no_such_file_or_directory
@@ -442,13 +440,13 @@ class Shared_Memory: public std::span<
     && defined __cpp_lib_ranges_join_with  \
     && defined __cpp_lib_bind_back
             return std::ranges::fold_left(
-                this->area
+                static_cast<const std::span&>(*this)
                 | std::views::chunk(num_col)
                 | std::views::transform(
                     std::bind_back(
                         std::bit_or<>{},
                         std::views::transform([](auto& B) static {
-                            return std::format("{:02X}", B);
+                            return ""s + "0123456789ABCDEF"[(unsigned char)B >> 4] + "0123456789ABCDEF"[B & 0x0F];
                         })
                         | std::views::join_with(space)
                     )
@@ -459,8 +457,8 @@ class Shared_Memory: public std::span<
 #else
             std::vector<std::vector<std::string>> lines;
             std::vector<std::string> line;
-            for (const auto& B : this->area) {
-                line.push_back(std::format("{:02X}", B));
+            for (const auto& B : static_cast<const std::span&>(*this)) {
+                line.push_back(""s + "0123456789ABCDEF"[(unsigned char)B >> 4] + "0123456789ABCDEF"[B & 0x0F]);
                 line.push_back(std::string{space});
                 if (line.size() / 2 == num_col) {
                     line.back() = '\n';
